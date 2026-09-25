@@ -263,6 +263,35 @@ float32相対値とすることで、平面直角座標系のような大きな�
 | `setWalkMode(on)` | `OrbitControls`⇔`WalkControls`の排他切替。ON時は`near`を0.05へ縮小、OFF時は視線5m先を`OrbitControls.target`に設定して復帰 |
 | `startWalkAt(world, eyeHeight)` | クリック点(実座標)に目線高さを加えて一人称視点を開始 |
 
+マウス左ボタン押下（`onPointerDown`）は回転操作の候補かどうか（非ウォークモードかつ
+Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパン操作になるため対象外）だけを記録し、
+回転候補の場合は`controls.enabled = false`にして`OrbitControls`の入力処理（回転・パン・ズーム）を
+一時停止する。
+
+`OrbitControls`は`target`を変更しても`update()`内の計算上カメラの**位置**は変わらないが、
+続く`object.lookAt(target)`により**向き**は強制的に`target`の方向（＝画面中央）を向く。
+そのためクリック位置が画面中央でない限り、`target`を切り替えた瞬間に必ず視点の向き直りが
+発生してしまい、`OrbitControls`の`target`/`lookAt`方式ではクリック位置を画面上で動かさずに
+その点を中心として回転を始めることができない（調査: [docs/research/3-rotate-around-cursor.md](research/3-rotate-around-cursor.md)）。
+そのため、ドラッグによる回転処理自体を独自実装に置き換えている。
+
+実際に一定px（4px）以上動いた最初の`pointermove`（`onPointerMoveForRotatePivot`）でのみ、
+`pointerdown`時点の座標を`pick()`でレイキャストし、ヒットした点を回転中心（`rotatePivot`、
+ワールド座標）として記録する。ヒットしない場合は`controls.enabled = true`に戻し、通常の
+`OrbitControls`回転（既存の`target`中心）に任せる。ドラッグ中の各`pointermove`
+（`rotateAroundPivot(dx, dy)`）では`OrbitControls`を一切介さず、直前のポインタ位置からの
+移動量だけを使って、カメラのオフセット（`camera.position - rotatePivot`）を`camera.up`まわりに
+ヨー回転、続けてカメラのローカル右方向まわりにピッチ回転し、同じ回転量を`camera.quaternion`にも
+適用してからカメラ位置を再計算する。`lookAt()`を呼ばないため、クリックした点が画面中央へ
+強制的に移動することはない。独自回転中は`render()`内の`controls.update()`呼び出し自体を
+スキップする（`update()`は毎フレーム無条件で`lookAt(target)`を呼ぶため、呼ぶと独自に設定した
+向きが上書きされてしまう）。
+
+`onPointerUp`では、独自回転を行っていた場合は`controls.target`を**カメラの現在の正面方向**上の
+点に置き直してから（この点は定義上すでに画面中央にあるため`lookAt()`を呼んでも向きは変化しない）
+`controls.enabled = true`に戻す。ドラッグに至らなかった単純クリックの場合は`target`を変更せず、
+`enabled`を戻すだけとする。
+
 #### 3.7.4 ピッキング（`pick()`）
 
 `Raycaster.params.Points.threshold` を「注視点距離の約6px相当」に動的設定して点群をレイキャスト。
