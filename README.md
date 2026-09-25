@@ -126,3 +126,10 @@ scripts/
 ## 依存
 
 three.js, laz-perf (WASM), proj4, Vite, TypeScript
+
+## 開発フロー
+
+本リポジトリへの変更作業は [CONTRIBUTING.md](CONTRIBUTING.md) に定める工程
+（Issue登録→作業ブランチ作成→リサーチ・技術検証→設計→レビュー→実装→テスト→動作確認→更新履歴作成→PR→マージ）
+に従うこと。基本設計は [docs/basic-design.md](docs/basic-design.md)、
+詳細設計は [docs/detailed-design.md](docs/detailed-design.md) を参照。
