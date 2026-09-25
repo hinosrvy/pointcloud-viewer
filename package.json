@@ -1,0 +1,25 @@
+{
+  "name": "pointcloud-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "laz-perf": "^0.0.7",
+    "proj4": "^2.22.0",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/emscripten": "^1.41.6",
+    "@types/proj4": "^2.5.6",
+    "@types/three": "^0.186.0",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
