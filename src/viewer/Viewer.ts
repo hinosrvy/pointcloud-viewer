@@ -80,6 +80,7 @@ export class Viewer {
     this.resize();
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    window.addEventListener('pointermove', (e) => this.onPointerMoveForRotatePivot(e));
     this.walk = new WalkControls(this.camera, canvas);
     this.walk.onExit = () => this.setWalkMode(false);
     this.renderer.setAnimationLoop(() => this.render());
@@ -96,7 +97,9 @@ export class Viewer {
 
   private render() {
     if (this.walkMode) this.walk.update();
-    else this.controls.update();
+    // 独自の回転中心ドラッグ中はOrbitControls.update()を呼ばない（毎フレームlookAt(target)で
+    // 向きが上書きされ、クリック位置中心の回転が壊れてしまうため）。
+    else if (!this.rotateActive) this.controls.update();
     // ラベル・マーカーは画面上のピクセルサイズが一定になるよう、各オブジェクトまでの距離で決める
     const LABEL_PX = 18; // ラベル高さ
     const MARKER_PX = 5; // マーカー半径
@@ -289,10 +292,79 @@ export class Viewer {
 
   // ------------------------------------------------------------ picking / measurement
   private downPos = { x: 0, y: 0 };
+  private lastPointerPos = { x: 0, y: 0 };
+  /** 現在のドラッグが回転操作の候補か（左ボタン・非ウォーク・修飾キーなし。Ctrl/Meta/ShiftはOrbitControls側でパン扱いになるため対象外） */
+  private rotateCandidate = false;
+  /** クリック位置を中心にOrbitControlsを介さず独自回転を行っている最中か */
+  private rotateActive = false;
+  /** 回転中心（ワールド座標）。ドラッグ開始位置でpick()した点 */
+  private rotatePivot: THREE.Vector3 | null = null;
   private onPointerDown(e: PointerEvent) {
     this.downPos = { x: e.clientX, y: e.clientY };
+    this.lastPointerPos = { x: e.clientX, y: e.clientY };
+    this.rotateCandidate = e.button === 0 && !this.walkMode && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    this.rotateActive = false;
+    this.rotatePivot = null;
+    // ドラッグと判定されるまでOrbitControlsの回転処理を止め、旧回転中心での余計な回転が
+    // 混ざらないようにする（有効化はonPointerMoveForRotatePivot/onPointerUpで行う）。
+    if (this.rotateCandidate) this.controls.enabled = false;
+  }
+  /**
+   * クリック位置を回転の原点にする。OrbitControls.target をクリック位置へ差し替えると
+   * 毎フレームの lookAt(target) でその点が画面中心へスナップしてしまうため使わず、
+   * カメラの位置と向きを同時に、クリックした点を中心に回転させることで見た目上の
+   * ジャンプなしに「クリック位置中心の回転」を実現する。
+   */
+  private onPointerMoveForRotatePivot(e: PointerEvent) {
+    if (!this.rotateCandidate) return;
+    const dx = e.clientX - this.lastPointerPos.x;
+    const dy = e.clientY - this.lastPointerPos.y;
+    this.lastPointerPos = { x: e.clientX, y: e.clientY };
+    if (!this.rotateActive) {
+      if (Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) < 4) return; // 単純クリックは対象外
+      const hit = this.pick(this.downPos.x, this.downPos.y);
+      if (!hit) {
+        // ヒットしない場合は通常のOrbitControls回転（既存のtarget中心）に任せる
+        this.rotateCandidate = false;
+        this.controls.enabled = true;
+        return;
+      }
+      this.rotateActive = true;
+      this.rotatePivot = hit;
+    }
+    this.rotateAroundPivot(dx, dy);
+  }
+  /** クリックした点（rotatePivot）を中心に、カメラの位置と向きを一体で回転させる */
+  private rotateAroundPivot(dx: number, dy: number) {
+    if (!this.rotatePivot) return;
+    const h = this.canvas.clientHeight || window.innerHeight;
+    const yawAngle = (-2 * Math.PI * dx) / h;
+    const pitchAngle = (-2 * Math.PI * dy) / h;
+    const offset = this.camera.position.clone().sub(this.rotatePivot);
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(this.camera.up, yawAngle);
+    offset.applyQuaternion(qYaw);
+    this.camera.quaternion.premultiply(qYaw);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, pitchAngle);
+    offset.applyQuaternion(qPitch);
+    this.camera.quaternion.premultiply(qPitch);
+    this.camera.position.copy(this.rotatePivot).add(offset);
   }
   private onPointerUp(e: PointerEvent) {
+    if (this.rotateCandidate) {
+      if (this.rotateActive) {
+        // 現在のカメラの向きの先（画面中心）にtargetを置き直す。lookAt()を呼んでも
+        // 向きが変わらない位置なので、OrbitControlsへ戻す際に視点はスナップしない。
+        const dist = this.camera.position.distanceTo(this.controls.target);
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        this.controls.target.copy(this.camera.position).addScaledVector(forward, dist);
+      }
+      this.controls.enabled = true;
+      this.rotateCandidate = false;
+      this.rotateActive = false;
+      this.rotatePivot = null;
+    }
     if (e.button !== 0) return;
     if (Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4) return; // ドラッグは無視
     const hit = this.pick(e.clientX, e.clientY);
