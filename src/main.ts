@@ -215,6 +215,28 @@ toolbar.append(
   walkBtn,
 );
 
+// =============================================================== デバッグ情報パネル（Issue #5 調査用）
+const debugBox = document.getElementById('debug')!;
+const debugBtn = button('デバッグ情報', () => {
+  const on = !debugBox.classList.contains('show');
+  debugBox.classList.toggle('show', on);
+  debugBtn.classList.toggle('active', on);
+});
+toolbar.append(debugBtn);
+viewer.onDebugUpdate = (info) => {
+  if (!debugBox.classList.contains('show')) return;
+  const p = info.cameraPosition;
+  const t = info.target;
+  debugBox.textContent =
+    `camera  ${p.x.toFixed(4)}, ${p.y.toFixed(4)}, ${p.z.toFixed(4)}\n` +
+    `target  ${t.x.toFixed(4)}, ${t.y.toFixed(4)}, ${t.z.toFixed(4)}\n` +
+    `distance     ${info.distance.toExponential(4)}\n` +
+    `minDistance  ${info.minDistance.toExponential(4)}\n` +
+    `controls.enabled ${info.controlsEnabled}\n` +
+    `rotateCandidate  ${info.rotateCandidate}\n` +
+    `rotateActive     ${info.rotateActive}`;
+};
+
 // =============================================================== ウォークスルー
 const walkSection = section('ウォークスルー', false);
 const walkSpeed = slider('移動速度', { min: 0.2, max: 20, step: 0.1, value: 1.5, format: (v) => `${v.toFixed(1)} m/s` }, (v) => (viewer.walk.speed = v));

@@ -19,3 +19,19 @@
   向きを同時に回転させる独自実装（`Viewer.rotateAroundPivot()`）に置き換えた。単純クリックでは
   視点は変化せず、ドラッグ終了時も視点ジャンプなく通常の`OrbitControls`操作へ復帰する。
   設計は docs/detailed-design.md「3.7.3 視点制御」、調査は docs/research/3-rotate-around-cursor.md を参照。
+- マウスホイールでのズームイン操作を繰り返すとズームインが効かなくなる不具合を修正（Issue #5）。
+  `OrbitControls`のカーソル位置中心ズームはカメラの現在距離に比例した絶対移動量でカメラを
+  動かすため、`controls.minDistance`が既定値`0`のままだと距離が十分小さくなった時点で
+  移動量が倍精度浮動小数点の丸め誤差を下回り、ズームインが反応しなくなる。これを防ぐため
+  `controls.minDistance`にシーンサイズに応じた正の下限値（`minDistanceForSize()`）を設定した。
+  また、クリック位置中心の回転（Issue #3）終了時に`target`を置き直す処理で、`target`が
+  カメラ位置とほぼ一致してしまうことがあり、その場合`OrbitControls`のズーム・パンが
+  距離に比例した移動量計算のため無反応になる不具合も併せて修正（`computeTargetAfterRotate()`
+  で置き直し距離を`minDistance`未満にならないようクランプ）。
+  実機確認の結果、`minDistance`を`camera.near`と同じ比率（`size / 5000`）にすると通常操作の
+  数回のホイール操作だけで下限に到達し、ズームだけでなく`OrbitControls`のパン感度
+  （距離に比例）も潰れて右ドラッグ移動まで無反応になることが判明したため、`minDistanceForSize()`を
+  `camera.near`から切り離し、実用上到達しない程度に小さい比率（`size * 1e-6`）に修正した。
+  この切り分けのため、カメラ位置・`target`・距離・`minDistance`等を画面表示するデバッグ情報
+  パネル（ツールバー「デバッグ情報」ボタン）を追加した。
+  設計は docs/detailed-design.md「3.7.3 視点制御」、調査は docs/research/5-zoom-in-stuck.md を参照。
