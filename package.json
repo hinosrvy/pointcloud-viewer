@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@sparkjsdev/spark": "2.2.0",
     "laz-perf": "^0.0.7",
     "proj4": "^2.22.0",
     "three": "^0.186.0"
