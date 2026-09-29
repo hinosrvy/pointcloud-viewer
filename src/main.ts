@@ -232,6 +232,8 @@ viewer.onDebugUpdate = (info) => {
     `target  ${t.x.toFixed(4)}, ${t.y.toFixed(4)}, ${t.z.toFixed(4)}\n` +
     `distance     ${info.distance.toExponential(4)}\n` +
     `minDistance  ${info.minDistance.toExponential(4)}\n` +
+    `near / far   ${info.near.toExponential(4)} / ${info.far.toExponential(4)}\n` +
+    `sceneSize    ${info.sceneSize.toExponential(4)}\n` +
     `controls.enabled ${info.controlsEnabled}\n` +
     `rotateCandidate  ${info.rotateCandidate}\n` +
     `rotateActive     ${info.rotateActive}`;

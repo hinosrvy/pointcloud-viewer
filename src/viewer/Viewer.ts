@@ -25,12 +25,16 @@ export interface Measurement {
   distance: number;
 }
 
-/** Issue #5 調査用のカメラ/OrbitControls状態スナップショット */
+/** Issue #5/#7 調査用のカメラ/OrbitControls状態スナップショット */
 export interface ViewerDebugInfo {
   cameraPosition: THREE.Vector3;
   target: THREE.Vector3;
   distance: number;
   minDistance: number;
+  near: number;
+  far: number;
+  /** 読み込み済み点群全体のバウンディングボックス対角長 */
+  sceneSize: number;
   controlsEnabled: boolean;
   rotateCandidate: boolean;
   rotateActive: boolean;
@@ -156,13 +160,16 @@ export class Viewer {
     this.onDebugUpdate?.(this.getDebugInfo());
   }
 
-  /** カメラ位置・target・距離など、ズーム/パン不具合（Issue #5）の調査用デバッグ情報 */
+  /** カメラ位置・target・距離など、ズーム/パン不具合（Issue #5/#7）の調査用デバッグ情報 */
   getDebugInfo(): ViewerDebugInfo {
     return {
       cameraPosition: this.camera.position.clone(),
       target: this.controls.target.clone(),
       distance: this.camera.position.distanceTo(this.controls.target),
       minDistance: this.controls.minDistance,
+      near: this.camera.near,
+      far: this.camera.far,
+      sceneSize: this.bounds.isEmpty() ? 0 : this.bounds.getSize(new THREE.Vector3()).length(),
       controlsEnabled: this.controls.enabled,
       rotateCandidate: this.rotateCandidate,
       rotateActive: this.rotateActive,
