@@ -25,12 +25,16 @@ export interface Measurement {
   distance: number;
 }
 
-/** Issue #5 調査用のカメラ/OrbitControls状態スナップショット */
+/** Issue #5/#7 調査用のカメラ/OrbitControls状態スナップショット */
 export interface ViewerDebugInfo {
   cameraPosition: THREE.Vector3;
   target: THREE.Vector3;
   distance: number;
   minDistance: number;
+  near: number;
+  far: number;
+  /** 読み込み済み点群全体のバウンディングボックス対角長 */
+  sceneSize: number;
   controlsEnabled: boolean;
   rotateCandidate: boolean;
   rotateActive: boolean;
@@ -66,6 +70,61 @@ export function computeTargetAfterRotate(
 }
 
 /**
+ * ダブルクリックした地点までズームインする際の新しいカメラ位置を計算する（Issue #7）。
+ * クリック地点までの距離を半分に縮めるが、minDistance未満にはしない。
+ * zoomSpeedの調整だけではtargetが遠くに固定されたままのため効果が薄かったことから、
+ * PotreeViewer同様にクリック地点を基準にズームインする操作を追加する。
+ */
+export function computeDoubleClickZoomPosition(
+  cameraPosition: THREE.Vector3,
+  hitPoint: THREE.Vector3,
+  minDistance: number,
+): THREE.Vector3 {
+  const offset = cameraPosition.clone().sub(hitPoint);
+  const dist = offset.length();
+  if (dist < 1e-9) return cameraPosition.clone();
+  const newDist = Math.max(dist * 0.5, minDistance);
+  offset.setLength(newDist);
+  return hitPoint.clone().add(offset);
+}
+
+/**
+ * カメラ・target間の距離がminDistance未満に落ち込んでいないかを毎フレーム強制的に
+ * 再クランプする（Issue #7 追加調査3）。zoomToCursor有効時はOrbitControls内部で
+ * カーソル方向へ直接カメラ位置を動かす経路があり、target方向とずれるとクランプ済みの
+ * はずのdistanceが実際にはminDistance未満まで落ち込みうることを実機で確認した。
+ * 方向ベクトルが定まらないほど近い場合はfallbackDirectionを使う。
+ */
+export function clampCameraDistance(
+  cameraPosition: THREE.Vector3,
+  target: THREE.Vector3,
+  minDistance: number,
+  fallbackDirection: THREE.Vector3,
+): THREE.Vector3 {
+  const offset = cameraPosition.clone().sub(target);
+  const dist = offset.length();
+  if (dist >= minDistance) return cameraPosition.clone();
+  const dir = dist > 1e-6 ? offset.divideScalar(dist) : fallbackDirection.clone().normalize();
+  return target.clone().addScaledVector(dir, minDistance);
+}
+
+/** ダブルクリックズームのアニメーションで使う減速イージング（Issue #7 追加調査4） */
+export function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+/**
+ * カメラ-target間距離に追従してnear平面を動的に縮める（Issue #7）。
+ * フィット時のnear（size/5000、maxNear）とminDistance相当（minNear）は`size`によらず
+ * 常に約200倍の比率で固定されており、distanceがminDistanceへ到達するはるか手前で
+ * near平面クリップにより点群がすり抜けて見える不具合があった。distanceが縮むほどnearも
+ * distance/100に追従して縮めることで、クリップ開始をminDistance付近まで遅らせる。
+ */
+export function dynamicNear(distance: number, minNear: number, maxNear: number): number {
+  return Math.min(maxNear, Math.max(minNear, distance / 100));
+}
+
+/**
  * three.js による点群ビューア。
  * シーン座標 = 実座標 - origin（最初に読んだファイルの min）。float32 の精度落ちを防ぐ。
  */
@@ -86,6 +145,8 @@ export class Viewer {
   readonly walk: WalkControls;
   walkMode = false;
   private savedNear = 0.1;
+  /** フィット時のnear（size/5000）。ズーム中のnear動的再計算(dynamicNear)の上限として使う */
+  private baseNear = 0.1;
   onWalkModeChange: ((on: boolean) => void) | null = null;
   /** ズーム/パン不具合（Issue #5）の調査用。毎フレーム getDebugInfo() の内容を通知する */
   onDebugUpdate: ((info: ViewerDebugInfo) => void) | null = null;
@@ -108,6 +169,10 @@ export class Viewer {
     this.controls.dampingFactor = 0.12;
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true; // ホイールズームはカーソル位置を中心に
+    // 既定値(1.0)だと、点群読み込み中のメインスレッド混雑でフレームが遅延した際、
+    // その間に溜まったホイールイベント分の倍率が次のupdate()で一括適用され、
+    // 軽く触れただけで大きくズームインしてしまう（Issue #7）。感度を下げて緩和する。
+    this.controls.zoomSpeed = 0.5;
     this.controls.minDistance = minDistanceForSize(0);
     this.scene.add(this.overlays);
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
@@ -123,6 +188,7 @@ export class Viewer {
     this.resize();
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    canvas.addEventListener('dblclick', (e) => this.onDoubleClick(e));
     window.addEventListener('pointermove', (e) => this.onPointerMoveForRotatePivot(e));
     this.walk = new WalkControls(this.camera, canvas);
     this.walk.onExit = () => this.setWalkMode(false);
@@ -140,9 +206,29 @@ export class Viewer {
 
   private render() {
     if (this.walkMode) this.walk.update();
-    // 独自の回転中心ドラッグ中はOrbitControls.update()を呼ばない（毎フレームlookAt(target)で
-    // 向きが上書きされ、クリック位置中心の回転が壊れてしまうため）。
-    else if (!this.rotateActive) this.controls.update();
+    else {
+      if (this.zoomAnim) {
+        this.updateZoomAnim();
+      } else if (!this.rotateActive) {
+        // 独自の回転中心ドラッグ中はOrbitControls.update()を呼ばない（毎フレームlookAt(target)で
+        // 向きが上書きされ、クリック位置中心の回転が壊れてしまうため）。
+        this.controls.update();
+        // zoomToCursor有効時、内部でカーソル方向へ直接カメラ位置を動かす経路があり、
+        // target方向とずれるとdistanceがminDistance未満まで落ち込むことがある（Issue #7）。
+        // 起きてしまった場合に備え、毎フレーム強制的に再クランプする。
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        this.camera.position.copy(
+          clampCameraDistance(this.camera.position, this.controls.target, this.controls.minDistance, forward.negate()),
+        );
+      }
+      const distance = this.camera.position.distanceTo(this.controls.target);
+      const near = dynamicNear(distance, this.controls.minDistance, this.baseNear);
+      if (near !== this.camera.near) {
+        this.camera.near = near;
+        this.camera.updateProjectionMatrix();
+      }
+    }
     // ラベル・マーカーは画面上のピクセルサイズが一定になるよう、各オブジェクトまでの距離で決める
     const LABEL_PX = 18; // ラベル高さ
     const MARKER_PX = 5; // マーカー半径
@@ -156,13 +242,29 @@ export class Viewer {
     this.onDebugUpdate?.(this.getDebugInfo());
   }
 
-  /** カメラ位置・target・距離など、ズーム/パン不具合（Issue #5）の調査用デバッグ情報 */
+  /** ダブルクリックズームのカメラ位置・targetを毎フレーム補間する（Issue #7 追加調査4）。
+   * targetもstart/endとも視線方向上の点として計算済みのため、lookAt()は呼ばず視線方向を固定する
+   * （呼ぶとクリック地点が画面中心へスナップし、不自然な見た目になる）。 */
+  private updateZoomAnim() {
+    const anim = this.zoomAnim;
+    if (!anim) return;
+    const t = Math.min((performance.now() - anim.startTime) / anim.duration, 1);
+    const e = easeOutCubic(t);
+    this.camera.position.lerpVectors(anim.startPos, anim.endPos, e);
+    this.controls.target.lerpVectors(anim.startTarget, anim.endTarget, e);
+    if (t >= 1) this.zoomAnim = null;
+  }
+
+  /** カメラ位置・target・距離など、ズーム/パン不具合（Issue #5/#7）の調査用デバッグ情報 */
   getDebugInfo(): ViewerDebugInfo {
     return {
       cameraPosition: this.camera.position.clone(),
       target: this.controls.target.clone(),
       distance: this.camera.position.distanceTo(this.controls.target),
       minDistance: this.controls.minDistance,
+      near: this.camera.near,
+      far: this.camera.far,
+      sceneSize: this.bounds.isEmpty() ? 0 : this.bounds.getSize(new THREE.Vector3()).length(),
       controlsEnabled: this.controls.enabled,
       rotateCandidate: this.rotateCandidate,
       rotateActive: this.rotateActive,
@@ -302,7 +404,8 @@ export class Viewer {
     const size = box.getSize(new THREE.Vector3()).length();
     this.controls.target.copy(c);
     this.camera.position.copy(c).add(new THREE.Vector3(size * 0.5, -size * 0.6, size * 0.5));
-    this.camera.near = Math.max(0.01, size / 5000);
+    this.baseNear = Math.max(0.01, size / 5000);
+    this.camera.near = this.baseNear;
     this.camera.far = size * 50;
     this.camera.updateProjectionMatrix();
     this.controls.minDistance = minDistanceForSize(size);
@@ -357,12 +460,23 @@ export class Viewer {
   private rotateActive = false;
   /** 回転中心（ワールド座標）。ドラッグ開始位置でpick()した点 */
   private rotatePivot: THREE.Vector3 | null = null;
+  /** ダブルクリックズームの補間アニメーション状態（Issue #7 追加調査4） */
+  private zoomAnim: {
+    startPos: THREE.Vector3;
+    endPos: THREE.Vector3;
+    startTarget: THREE.Vector3;
+    endTarget: THREE.Vector3;
+    startTime: number;
+    duration: number;
+  } | null = null;
   private onPointerDown(e: PointerEvent) {
     this.downPos = { x: e.clientX, y: e.clientY };
     this.lastPointerPos = { x: e.clientX, y: e.clientY };
     this.rotateCandidate = e.button === 0 && !this.walkMode && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     this.rotateActive = false;
     this.rotatePivot = null;
+    // ダブルクリックズームアニメーション中に別の操作を始めた場合は即座に中断する
+    this.zoomAnim = null;
     // ドラッグと判定されるまでOrbitControlsの回転処理を止め、旧回転中心での余計な回転が
     // 混ざらないようにする（有効化はonPointerMoveForRotatePivot/onPointerUpで行う）。
     if (this.rotateCandidate) this.controls.enabled = false;
@@ -429,6 +543,8 @@ export class Viewer {
     if (Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4) return; // ドラッグは無視
     const hit = this.pick(e.clientX, e.clientY);
     if (!hit) return;
+    // シングルクリックでtargetをクリック地点へ更新する挙動は撤回した（Issue #7 追加調査5）。
+    // 視線が画面中心へスナップし、ダブルクリックズームとも挙動が競合して不自然だったため。
     this.onPick?.(hit, this.toWorld(hit));
     if (!this.measureMode) return;
     if (!this.pendingPoint) {
@@ -441,6 +557,30 @@ export class Viewer {
       this.pendingMarker.visible = false;
       this.onMeasure?.(m);
     }
+  }
+
+  /** ダブルクリックした地点までズームインする（Issue #7）。PotreeViewer同様のズーム操作。
+   * 瞬時にカメラを移動させると視点が把握しづらいため、短時間のアニメーションで滑らかに補間する。
+   * targetをクリック地点そのものにすると視線が画面中心へスナップして不自然なため、
+   * 現在の視線方向は変えず、その方向に沿ってカメラを前進させることでクリック地点の
+   * 画面上の位置を保ったままズームする（ホイールのzoomToCursorと同様の見え方）。 */
+  private onDoubleClick(e: MouseEvent) {
+    if (this.walkMode) return;
+    const hit = this.pick(e.clientX, e.clientY);
+    if (!hit) return;
+    const endPos = computeDoubleClickZoomPosition(this.camera.position, hit, this.controls.minDistance);
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const startDist = Math.max(this.camera.position.distanceTo(this.controls.target), this.controls.minDistance);
+    const endDist = endPos.distanceTo(hit);
+    this.zoomAnim = {
+      startPos: this.camera.position.clone(),
+      endPos,
+      startTarget: this.camera.position.clone().addScaledVector(forward, startDist),
+      endTarget: endPos.clone().addScaledVector(forward, endDist),
+      startTime: performance.now(),
+      duration: 300,
+    };
   }
 
   /** 指定位置において 1 ピクセルが何ワールド単位に相当するか */

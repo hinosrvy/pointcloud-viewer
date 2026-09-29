@@ -280,6 +280,32 @@ float32相対値とすることで、平面直角座標系のような大きな�
 （未読み込み時のコンストラクタでも同じ関数で下限を初期値として設定）。`camera.near`は
 デプスバッファ精度維持のため従来通り`size / 5000`のまま`minDistance`とは独立に扱う。
 
+**ニアクリップ帯によるズーム「すり抜け」（Issue #7）**: 上記の`minDistanceForSize()`と
+`camera.near = size / 5000`は独立な計算式のため、両者の比は`size`によらず常に約200倍
+（`(size/5000) / (size*1e-6) = 200`）に固定される。教室スキャン程度の小さい`size`では
+`near`の絶対値も数cm程度で体感されなかったが、範囲の広い点群（`size`が数千〜）では`near`が
+1m前後の無視できない絶対距離になり、`distance`が`minDistance`へ到達する**はるか手前**で
+`camera.near`によるニアクリップが始まり、「ズームインの終盤で点群がすり抜けて消え、その先の
+空間へ飛び込んでしまう」ように見える不具合が生じることが、デバッグ情報パネルの実機計測
+（`distance`が`minDistance`とほぼ一致する一方`near`はその約200倍）で判明した（調査:
+[docs/research/7-zoom-in-stuck-wide-scale.md](research/7-zoom-in-stuck-wide-scale.md)）。
+`minDistance`を`near`に近づける（＝結合する）と、Issue #5で問題になった「詳細を見るための
+ズームインができない」不満が再発するため採用しない。代わりに、`OrbitControls`の
+`change`イベント（`render()`内、カメラ・target間距離を毎フレーム参照可能な箇所）で
+`camera.near`を現在距離に応じて動的に再計算する（`near = clamp(distance / 100, minDistance近傍の
+下限, size / 5000)`）方式を採用し、ズームインするほど`near`も追従して縮むようにする。
+`minDistance`（浮動小数点崩壊防止の下限）と`far`（`size * 50`固定）は従来どおり変更しない。
+
+**ホイールズームの「一括ジャンプ」対策（Issue #7）**: `OrbitControls`はホイール1回分のズーム倍率を
+`this._scale`に乗算で累積し、毎フレームの`update()`で一度に適用した後、`enableDamping`の設定に
+関わらず無条件に`_scale`を`1`へリセットする（回転・パンの`dampingFactor`によるフレームをまたいだ
+減衰はズームには適用されない）。そのため、大容量点群の読み込み処理でメインスレッドが混雑し
+アニメーションフレームの間隔が伸びている間にホイール操作を行うと、その間に蓄積した複数回分の
+倍率が一度の`update()`でまとめて適用され、「軽く触れただけで一気に大きくズームインする」体感を
+招く。この体感は`near`とは無関係にホイールイベントの積み上がりで発生するため、`controls.zoomSpeed`
+を既定値`1.0`から`0.5`へ引き下げ、1件あたりの倍率変化を緩やかにすることで、蓄積時の急激な
+ジャンプを緩和する（調査: [docs/research/7-zoom-in-stuck-wide-scale.md](research/7-zoom-in-stuck-wide-scale.md)）。
+
 マウス左ボタン押下（`onPointerDown`）は回転操作の候補かどうか（非ウォークモードかつ
 Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパン操作になるため対象外）だけを記録し、
 回転候補の場合は`controls.enabled = false`にして`OrbitControls`の入力処理（回転・パン・ズーム）を
@@ -307,7 +333,8 @@ Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパ�
 `onPointerUp`では、独自回転を行っていた場合は`controls.target`を**カメラの現在の正面方向**上の
 点に置き直してから（この点は定義上すでに画面中央にあるため`lookAt()`を呼んでも向きは変化しない）
 `controls.enabled = true`に戻す。ドラッグに至らなかった単純クリックの場合は`target`を変更せず、
-`enabled`を戻すだけとする。
+`onPick`コールバックに`pick()`の結果を渡すのみとする（後述のとおり、`target`をクリック地点へ
+更新する方式は一度採用したが、副作用のため撤回した）。
 
 この置き直し先の距離（`camera.position`から回転前の`target`までの距離）は、`rotatePivot`を
 中心に回転した結果カメラが古い`target`の近くをかすめると0に近づくことがあり、そのまま採用すると
@@ -316,10 +343,50 @@ Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパ�
 `controls.minDistance`を下限としてクランプしてから`target`を置き直す
 （`computeTargetAfterRotate()`として純粋関数に切り出し、ユニットテストで検証する）。
 
+**ダブルクリックによるクリック位置基準のズーム（Issue #7）**: `zoomToCursor = true`はズームの
+**方向**をカーソル位置に追従させるのみで、1回あたりの歩幅は常に`OrbitControls`内部の
+`_spherical.radius`（カメラ・`target`間の距離）に比例する。広範囲点群では`target`がフィット時の
+シーン中心に固定されがちで、ユーザーが実際に操作したい領域から離れているほど`zoomSpeed`を
+下げても歩幅が意図通りにならないことが実機検証で判明した（調査:
+[docs/research/7-zoom-in-stuck-wide-scale.md](research/7-zoom-in-stuck-wide-scale.md)）。
+そこでPotreeViewer等と同様に、`dblclick`イベント（`onDoubleClick()`）でヒットした地点までの
+距離を半分に縮める形でカメラを移動する（`minDistance`未満にはしない）ダブルクリックズームを
+追加した（`computeDoubleClickZoomPosition()`として純粋関数に切り出し、ユニットテストで検証）。
+瞬時に移動すると視点が把握しづらいため、`easeOutCubic()`による減速イージングでカメラ位置・
+`target`を約300msかけて補間するアニメーションにしている。
+
+当初は`target`をクリック地点そのものに設定していたが、`OrbitControls.update()`が毎フレーム
+無条件で呼ぶ`camera.lookAt(target)`により、クリックした点が画面中心へスナップしてしまい
+不自然だった（`onPointerUp`での単純クリックでも同様に`target`を更新する設計を一度採用したが、
+同じ理由で撤回した）。現在は視線方向（`camera.getWorldDirection()`）を変えず、その方向に沿って
+カメラを前進させるだけにし、`target`もクリック地点ではなく「ズーム後のカメラ位置からクリック
+地点までの距離だけ、視線方向に進んだ点」に置く。これによりクリックした点は画面上の同じ位置に
+留まったままズームし（ホイールの`zoomToCursor`と同じ見え方）、アニメーション完了後に
+`OrbitControls`の`lookAt(target)`が実行されても向きは変化しない（詳細:
+[docs/research/7-zoom-in-stuck-wide-scale.md](research/7-zoom-in-stuck-wide-scale.md)の
+追加調査4・5。イベント配線自体はWebGL依存のため[CONTRIBUTING.md](../CONTRIBUTING.md) §6の
+例外規定によりテスト対象外）。
+
+**カメラ・target間距離の防御的な再クランプ（Issue #7 追加調査3）**: 上記の対策後も、実機で
+ズームを繰り返すと`camera.position`・`controls.target`間の距離が`minDistance`を大きく
+下回り（実測: `distance`が`minDistance`の1/100万以下）、以降ズームイン・パン・ダブルクリック
+ズームのいずれも反応しなくなる現象を確認した。`OrbitControls`は内部で`_clampDistance()`により
+距離を`[minDistance, maxDistance]`にクランプしているが、`zoomToCursor`有効時はカーソル方向への
+レイに沿ってカメラ位置を直接動かす経路があり、`target`を外部から任意に書き換える本実装と
+組み合わさるとこのクランプ後もなお不変条件（`distance >= minDistance`）が崩れる場合がある
+（内部メカニズムの完全な特定には至っていないため、[docs/research/7-zoom-in-stuck-wide-scale.md](research/7-zoom-in-stuck-wide-scale.md)
+の追加調査3では仮説として記載）。根本原因の特定を待たず、`render()`で`controls.update()`の
+直後に`camera.position`・`target`間距離を再計算し、`minDistance`未満であれば同じ方向を保ったまま
+`minDistance`まで押し戻す防御的なクランプ（`clampCameraDistance()`）を追加した。これは
+Issue #5で採用した`computeTargetAfterRotate()`と同じ設計思想（不変条件をカメラ・targetの
+どちらかの側から強制的に保証する）を、毎フレームの防御として適用したものである。
+
 **デバッグ情報パネル（`getDebugInfo()` / `onDebugUpdate`）**: Issue #5の調査で、ソースコード解析に
 基づく修正が実機では効果を確認できないという事態が続いたため、`render()`内で毎フレーム
 カメラ位置・`target`・両者の距離・`minDistance`・`controls.enabled`・回転操作の内部状態
 （`rotateCandidate`/`rotateActive`）をまとめた`ViewerDebugInfo`を`getDebugInfo()`で取得できるようにし、
+Issue #7の調査では`near`/`far`（`camera.near`/`camera.far`）と`sceneSize`（読み込み済み点群全体の
+バウンディングボックス対角長）も追加し、ニアクリップとの関係を実機で確認できるようにした。
 `onDebugUpdate`コールバック経由で[src/main.ts](../src/main.ts)側へ通知する。UI側はツールバーの
 「デバッグ情報」ボタンで画面左上に表示のON/OFFを切り替えられる。WebGLコンテキストに依存し
 jsdom環境での単体テストが困難なため、`getDebugInfo()`自体はユニットテスト対象外とする
