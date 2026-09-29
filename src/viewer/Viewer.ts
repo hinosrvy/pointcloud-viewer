@@ -25,6 +25,46 @@ export interface Measurement {
   distance: number;
 }
 
+/** Issue #5 調査用のカメラ/OrbitControls状態スナップショット */
+export interface ViewerDebugInfo {
+  cameraPosition: THREE.Vector3;
+  target: THREE.Vector3;
+  distance: number;
+  minDistance: number;
+  controlsEnabled: boolean;
+  rotateCandidate: boolean;
+  rotateActive: boolean;
+}
+
+/**
+ * ホイールズームインの下限距離（OrbitControls.minDistance）を対象サイズから算出する。
+ * 距離0に近づくほど1回のズーム操作あたりの絶対移動量が浮動小数点の丸め誤差を下回り、
+ * ズームインが反応しなくなる問題（Issue #5）を防ぐための下限。
+ */
+// near平面（size/5000）とは意図的に切り離す。near相当まで縮めると通常のズーム操作で
+// すぐに下限へ到達し、OrbitControlsのパン感度（カメラ-target間距離に比例）も一緒に潰れて
+// 「右ドラッグ移動が効かない」体感になることをデバッグ情報パネルで実測確認済み（Issue #5）。
+// ここでは浮動小数点精度崩壊（size比で1e-15程度）に対して十分余裕を持たせつつ、
+// 実用上のズーム操作では到達しない程度に小さい値とする。
+export function minDistanceForSize(size: number): number {
+  return Math.max(1e-6, size * 1e-6);
+}
+
+/**
+ * クリック位置中心の回転終了後に OrbitControls.target を置き直す先を計算する。
+ * 回転前の旧targetまでの距離が minDistance 未満だと、target がカメラ位置とほぼ一致して
+ * 以降のズーム・パンが反応しなくなるため（Issue #5）、minDistanceを下限としてクランプする。
+ */
+export function computeTargetAfterRotate(
+  cameraPosition: THREE.Vector3,
+  forward: THREE.Vector3,
+  oldTarget: THREE.Vector3,
+  minDistance: number,
+): THREE.Vector3 {
+  const dist = Math.max(cameraPosition.distanceTo(oldTarget), minDistance);
+  return cameraPosition.clone().addScaledVector(forward, dist);
+}
+
 /**
  * three.js による点群ビューア。
  * シーン座標 = 実座標 - origin（最初に読んだファイルの min）。float32 の精度落ちを防ぐ。
@@ -47,6 +87,8 @@ export class Viewer {
   walkMode = false;
   private savedNear = 0.1;
   onWalkModeChange: ((on: boolean) => void) | null = null;
+  /** ズーム/パン不具合（Issue #5）の調査用。毎フレーム getDebugInfo() の内容を通知する */
+  onDebugUpdate: ((info: ViewerDebugInfo) => void) | null = null;
   private pendingPoint: THREE.Vector3 | null = null;
   private pendingMarker: THREE.Mesh;
   private raycaster = new THREE.Raycaster();
@@ -66,6 +108,7 @@ export class Viewer {
     this.controls.dampingFactor = 0.12;
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true; // ホイールズームはカーソル位置を中心に
+    this.controls.minDistance = minDistanceForSize(0);
     this.scene.add(this.overlays);
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
     const dir = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -110,6 +153,20 @@ export class Viewer {
     }
     if (this.pendingMarker.visible) this.pendingMarker.scale.setScalar(MARKER_PX * this.worldPerPixel(this.pendingMarker.position));
     this.renderer.render(this.scene, this.camera);
+    this.onDebugUpdate?.(this.getDebugInfo());
+  }
+
+  /** カメラ位置・target・距離など、ズーム/パン不具合（Issue #5）の調査用デバッグ情報 */
+  getDebugInfo(): ViewerDebugInfo {
+    return {
+      cameraPosition: this.camera.position.clone(),
+      target: this.controls.target.clone(),
+      distance: this.camera.position.distanceTo(this.controls.target),
+      minDistance: this.controls.minDistance,
+      controlsEnabled: this.controls.enabled,
+      rotateCandidate: this.rotateCandidate,
+      rotateActive: this.rotateActive,
+    };
   }
 
   // ------------------------------------------------------------ layers
@@ -248,6 +305,7 @@ export class Viewer {
     this.camera.near = Math.max(0.01, size / 5000);
     this.camera.far = size * 50;
     this.camera.updateProjectionMatrix();
+    this.controls.minDistance = minDistanceForSize(size);
     this.controls.update();
   }
 
@@ -355,10 +413,12 @@ export class Viewer {
       if (this.rotateActive) {
         // 現在のカメラの向きの先（画面中心）にtargetを置き直す。lookAt()を呼んでも
         // 向きが変わらない位置なので、OrbitControlsへ戻す際に視点はスナップしない。
-        const dist = this.camera.position.distanceTo(this.controls.target);
+        // 距離はminDistance未満に潰れないようクランプする（Issue #5: 潰れるとズーム・パンが反応しなくなる）。
         const forward = new THREE.Vector3();
         this.camera.getWorldDirection(forward);
-        this.controls.target.copy(this.camera.position).addScaledVector(forward, dist);
+        this.controls.target.copy(
+          computeTargetAfterRotate(this.camera.position, forward, this.controls.target, this.controls.minDistance),
+        );
       }
       this.controls.enabled = true;
       this.rotateCandidate = false;

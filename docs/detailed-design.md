@@ -258,10 +258,27 @@ float32相対値とすることで、平面直角座標系のような大きな�
 
 | メソッド | 内容 |
 |---|---|
-| `fitCamera(box)` | 対象Boxの中心・対角長からカメラ位置・near/farを自動設定 |
+| `fitCamera(box)` | 対象Boxの中心・対角長からカメラ位置・near/far・`controls.minDistance`を自動設定 |
 | `setView(kind)` | `top`/`north`/`east`/`iso` の定型視点方向へジャンプ |
 | `setWalkMode(on)` | `OrbitControls`⇔`WalkControls`の排他切替。ON時は`near`を0.05へ縮小、OFF時は視線5m先を`OrbitControls.target`に設定して復帰 |
 | `startWalkAt(world, eyeHeight)` | クリック点(実座標)に目線高さを加えて一人称視点を開始 |
+
+**ホイールズームの下限距離（`controls.minDistance`）**: `zoomToCursor = true`時の
+`OrbitControls`は、カーソル位置中心のズームインをカメラの現在距離に**比例した**絶対移動量で
+実現している。`minDistance`が既定値`0`のままだと、ズームインを繰り返して距離が十分小さくなった
+時点で1回あたりの移動量が倍精度浮動小数点の丸め誤差を下回り、カメラ位置の更新が実質的に
+効かなくなる（＝ズームインが反応しなくなる）不具合がある（調査:
+[docs/research/5-zoom-in-stuck.md](research/5-zoom-in-stuck.md)）。これを避けるため`controls.minDistance`に
+正の下限値を設定するが、当初`camera.near`と同じ比率`size / 5000`を採用したところ、
+デバッグ情報パネル（`Viewer.getDebugInfo()`、後述）による実機計測で「浮動小数点の丸め誤差に
+到達するはるか手前、通常のホイール操作数回で下限に到達してしまい、ズームだけでなく
+`OrbitControls._pan()`の移動量（距離に比例）も潰れて右ドラッグのパンまで無反応になる」ことが
+判明した。そのため`minDistanceForSize()`は`camera.near`とは切り離し、
+`Math.max(1e-6, size * 1e-6)`という、浮動小数点精度崩壊（シーン比1e-15程度）に対して
+十分な余裕を持たせつつ通常操作では実用上到達しない小さい比率を採用する。
+`fitCamera()`で対象Boxの対角長`size`に応じて`controls.minDistance`を設定する
+（未読み込み時のコンストラクタでも同じ関数で下限を初期値として設定）。`camera.near`は
+デプスバッファ精度維持のため従来通り`size / 5000`のまま`minDistance`とは独立に扱う。
 
 マウス左ボタン押下（`onPointerDown`）は回転操作の候補かどうか（非ウォークモードかつ
 Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパン操作になるため対象外）だけを記録し、
@@ -291,6 +308,22 @@ Ctrl/Meta/Shiftキー非押下。押下時は`OrbitControls`側の仕様でパ�
 点に置き直してから（この点は定義上すでに画面中央にあるため`lookAt()`を呼んでも向きは変化しない）
 `controls.enabled = true`に戻す。ドラッグに至らなかった単純クリックの場合は`target`を変更せず、
 `enabled`を戻すだけとする。
+
+この置き直し先の距離（`camera.position`から回転前の`target`までの距離）は、`rotatePivot`を
+中心に回転した結果カメラが古い`target`の近くをかすめると0に近づくことがあり、そのまま採用すると
+以降の`OrbitControls`のズーム・パンが距離に比例した移動量計算のため実質的に反応しなくなる
+（調査: [docs/research/5-zoom-in-stuck.md](research/5-zoom-in-stuck.md)）。これを防ぐため、
+`controls.minDistance`を下限としてクランプしてから`target`を置き直す
+（`computeTargetAfterRotate()`として純粋関数に切り出し、ユニットテストで検証する）。
+
+**デバッグ情報パネル（`getDebugInfo()` / `onDebugUpdate`）**: Issue #5の調査で、ソースコード解析に
+基づく修正が実機では効果を確認できないという事態が続いたため、`render()`内で毎フレーム
+カメラ位置・`target`・両者の距離・`minDistance`・`controls.enabled`・回転操作の内部状態
+（`rotateCandidate`/`rotateActive`）をまとめた`ViewerDebugInfo`を`getDebugInfo()`で取得できるようにし、
+`onDebugUpdate`コールバック経由で[src/main.ts](../src/main.ts)側へ通知する。UI側はツールバーの
+「デバッグ情報」ボタンで画面左上に表示のON/OFFを切り替えられる。WebGLコンテキストに依存し
+jsdom環境での単体テストが困難なため、`getDebugInfo()`自体はユニットテスト対象外とする
+（[CONTRIBUTING.md](../CONTRIBUTING.md) §6の例外規定に基づく）。
 
 #### 3.7.4 ピッキング（`pick()`）
 
