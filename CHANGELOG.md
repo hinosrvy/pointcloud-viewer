@@ -35,3 +35,21 @@
   この切り分けのため、カメラ位置・`target`・距離・`minDistance`等を画面表示するデバッグ情報
   パネル（ツールバー「デバッグ情報」ボタン）を追加した。
   設計は docs/detailed-design.md「3.7.3 視点制御」、調査は docs/research/5-zoom-in-stuck.md を参照。
+- 広範囲の点群でズームインを繰り返すと、途中でズームイン・パン・ダブルクリックズームの
+  いずれの操作もできなくなる不具合を修正（Issue #7）。
+  `camera.near`をシーン全体のバウンディングボックス基準の固定値にしていたため、広範囲点群では
+  ズームインで近づいた点がニアクリップ面より手前に来て見えなくなっていた問題を、カメラ・`target`間
+  距離に応じて`near`を毎フレーム再計算する`dynamicNear()`で解消した。また、ホイールズームの
+  1回あたりの歩幅が急激すぎる問題を`zoomSpeed`引き下げで緩和した。
+  さらに、ズームを繰り返すと`camera.position`・`controls.target`間の距離が`minDistance`を
+  大きく下回り、以降の操作が無反応になる不具合を確認し、`render()`内で毎フレーム距離を
+  再チェックし`minDistance`未満なら同じ方向を保ったまま押し戻す防御的なクランプ
+  （`clampCameraDistance()`）を追加した。
+  ダブルクリックでの点群ズームは、クリック地点を画面中央へ移動させる実装が
+  `OrbitControls.update()`の`camera.lookAt(target)`により視点を不自然にスナップさせていたため、
+  視線方向（`camera.getWorldDirection()`）を変えずにその方向へカメラを前進させる方式に変更し、
+  `easeOutCubic()`による約300msの滑らかなアニメーションを追加した。
+  検討の過程でシングルクリックでも`controls.target`をクリック地点へ更新する実装を一時採用したが、
+  同じ理由で画面中央へのスナップが発生しダブルクリック操作と干渉したため撤回し、
+  単純クリックは`onPick`コールバックの発火のみとした。
+  設計は docs/detailed-design.md「3.7.3 視点制御」、調査は docs/research/7-zoom-in-stuck-wide-scale.md を参照。
