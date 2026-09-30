@@ -89,7 +89,10 @@ flowchart LR
 
 ## 9. 更新履歴作成
 
-- [CHANGELOG.md](CHANGELOG.md) に変更内容を追記する（日付・概要・関連Issue番号）。
+- ユーザーに影響のある変更を含む場合は「バージョン管理規則」に従い `package.json` の `version` を更新する。
+- [CHANGELOG.md](CHANGELOG.md) の `## [<version>] - <更新年月日>` 見出し（例: `## [0.2.0] - 2026-09-30`）の下に
+  変更内容（概要・関連Issue番号）を追記する。バージョンを更新しない変更（ドキュメントのみ等）は
+  `## Unreleased` に追記する。
 
 ## 10. PR作成（承認者によるPR内容確認・動作確認）
 
