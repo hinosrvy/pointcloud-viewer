@@ -721,3 +721,30 @@ Spark SplatMesh]
   GitHub Pagesのプロジェクトサブパス配下でも追加設定なしで動作する。
 - ワークフローの`actions/setup-node`は`vite@^7`が要求するNode 20.19+/22.12+を満たすため
   `node-version: 22`を指定する。
+
+## 8. バージョン情報の管理・表示（Issue #9）
+
+調査結果は [docs/research/9-app-version-display.md](research/9-app-version-display.md) を参照。
+
+- `package.json`の`version`フィールドを唯一の情報源（single source of truth）とし、
+  セマンティックバージョニング（[semver.org](https://semver.org/lang/ja/)）に従って人手で更新する
+  （破壊的変更: メジャー、機能追加: マイナー、バグ修正: パッチ）。GitHubのタグ・Release機能とは
+  連携しない（本Issueのスコープ外）。
+- `version`だけでは「いつビルドされたものか」を区別できないため、ビルドを一意に識別する情報
+  （Gitショートコミットハッシュ）とビルド年月日（ビルド実行時刻を`YYYY-MM-DD`に整形）も併せて
+  埋め込む。セマンティックバージョン＋Gitショートハッシュ＋ビルド日時の組み合わせは、VS Code本体の
+  「バージョン情報」ダイアログ（Version / Commit / Date）やDockerイメージタグ等でも広く使われる
+  一般的な表記形式である。
+- `vite.config.ts`で`package.json`を`readFileSync`で読み込み、`define`ビルドオプションにより
+  `__APP_VERSION__`（`package.json`の`version`）・`__BUILD_HASH__`（`git rev-parse --short HEAD`。
+  `git`コマンド失敗時は`'unknown'`にフォールバック）・`__BUILD_DATE__`（`YYYY-MM-DD`）の
+  3つのグローバル定数をビルド時に埋め込む（`src/vite-env.d.ts`に型宣言を追加）。これにより
+  実行時のfetchや環境変数を介さず、ビルド成果物に静的な文字列としてインライン化される。
+- `git rev-parse --short HEAD`は`HEAD`コミットオブジェクト自体があれば取得できるため、
+  `actions/checkout@v4`の既定設定（`fetch-depth: 1`の浅いクローン）のままCI上でも正しく動作し、
+  ワークフローファイルの変更は不要。
+- 表示用の文字列整形は`formatVersionLabel(version, buildHash, buildDate)`として`src/ui.ts`に
+  純粋関数で切り出し、ユニットテストで検証する（例: `v0.1.0 (a1b2c3d, 2026-09-30)`）。
+- 画面表示は、サイドパネル上部のアプリタイトル（`点群ビューア`）の右側に上記関数の戻り値を
+  常時表示する。Issue #5/#7で追加したデバッグ情報パネル（`ViewerDebugInfo`）はカメラ・
+  `OrbitControls`の内部状態専用のため、バージョン情報はそこに含めず責務を分離する。

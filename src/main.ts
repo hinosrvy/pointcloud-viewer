@@ -8,7 +8,7 @@ import { loadSplatMesh } from './viewer/splats';
 import type { ColorMode } from './viewer/shaders';
 import { CRS_LIST, Crs, guessCrsFromWkt } from './viewer/crs';
 import { MapOverlay, ModelOverlay, PhotoOverlay, TILE_SOURCES } from './viewer/overlays';
-import { button, checkbox, el, fileButton, fmtInt, numberInput, section, select, slider } from './ui';
+import { button, checkbox, el, fileButton, fmtInt, formatVersionLabel, numberInput, section, select, slider } from './ui';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const panel = document.getElementById('panel')!;
@@ -68,7 +68,10 @@ fileSection.append(
   el('div', { class: 'small', text: '1ファイルあたりの表示点数。上限を超える分は均等に間引きます（COPC は階層レベルで選択）' }),
   layerList,
 );
-panel.append(el('h1', { text: '点群ビューア' }), fileSection);
+panel.append(
+  el('h1', { text: '点群ビューア ' }, el('span', { class: 'small' }, formatVersionLabel(__APP_VERSION__, __BUILD_HASH__, __BUILD_DATE__))),
+  fileSection,
+);
 
 function addSource(source: File | string, name: string) {
   const nameEl = el('div', { class: 'name', text: name });

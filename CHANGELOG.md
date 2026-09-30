@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- アプリのバージョン情報（`package.json`のバージョン・ビルド時のGitショートコミットハッシュ・
+  ビルド年月日）を画面上に常時表示するようにした（Issue #9）。
+  `vite.config.ts`の`define`ビルドオプションで`__APP_VERSION__`・`__BUILD_HASH__`・`__BUILD_DATE__`
+  をビルド成果物に静的な文字列としてインライン化し、サイドパネル上部のアプリタイトルの右側に
+  `v0.1.0 (a1b2c3d, 2026-09-30)`の形式で表示する。`version`は
+  [セマンティックバージョニング](https://semver.org/lang/ja/)に従い手動で更新する運用とし
+  （CONTRIBUTING.md「バージョン管理規則」）、Gitタグ・GitHub Releaseとは連携しない。
+  ビルドハッシュは`git rev-parse --short HEAD`で取得し、浅いクローン
+  （`actions/checkout@v4`既定の`fetch-depth: 1`）でも取得できるためCIのワークフロー変更は不要。
+  設計は docs/detailed-design.md「8. バージョン情報の管理・表示」、調査は
+  docs/research/9-app-version-display.md を参照。
 - ガウシアンスプラッティング（3DGS）データの表示に対応（Issue #12）。
   .ply / .spz / .splat / .ksplat / .sog をファイル選択・ドラッグ&ドロップ・URL 指定で読み込み、
   LAS/LAZ/COPC 点群と同じシーンで表示・表示切替・ズーム・削除できる。描画には Spark

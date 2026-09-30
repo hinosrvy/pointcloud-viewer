@@ -77,3 +77,8 @@ export function fileButton(label: string, accept: string, multiple: boolean, onF
 export function fmtInt(n: number): string {
   return n.toLocaleString('ja-JP');
 }
+
+/** アプリのバージョン・ビルドハッシュ・ビルド日付を1行の表示用文字列に整形する（Issue #9） */
+export function formatVersionLabel(version: string, buildHash: string, buildDate: string): string {
+  return `v${version} (${buildHash}, ${buildDate})`;
+}

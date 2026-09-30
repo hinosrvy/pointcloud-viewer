@@ -100,3 +100,14 @@ flowchart LR
 
 - 承認後、`main` ブランチへマージする。
 - マージ後は作業ブランチを削除する。
+
+## バージョン管理規則
+
+- `package.json` の `version` を唯一の情報源（single source of truth）とする。
+- [セマンティックバージョニング](https://semver.org/lang/ja/) に従う（破壊的変更: メジャー、
+  機能追加: マイナー、バグ修正: パッチ）。ユーザーに影響のある変更を含むPRでは、
+  実装（6.）と併せて `version` を更新する。
+- Gitのタグ・GitHub Releaseとは連携しない。画面表示にはビルド時の
+  Gitショートコミットハッシュ・ビルド日付も併記し、`version` を上げ忘れた場合でも
+  ビルドを一意に識別できるようにする（詳細: [docs/detailed-design.md](docs/detailed-design.md)「8. バージョン情報の管理・表示」）。
+
