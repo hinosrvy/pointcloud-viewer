@@ -4,11 +4,13 @@
 
 ## Unreleased
 
+## [0.2.0] - 2026-09-30
+
 - アプリのバージョン情報（`package.json`のバージョン・ビルド時のGitショートコミットハッシュ・
   ビルド年月日）を画面上に常時表示するようにした（Issue #9）。
   `vite.config.ts`の`define`ビルドオプションで`__APP_VERSION__`・`__BUILD_HASH__`・`__BUILD_DATE__`
   をビルド成果物に静的な文字列としてインライン化し、サイドパネル上部のアプリタイトルの右側に
-  `v0.1.0 (a1b2c3d, 2026-09-30)`の形式で表示する。`version`は
+  `v0.2.0 (a1b2c3d, 2026-09-30)`の形式で表示する。`version`は
   [セマンティックバージョニング](https://semver.org/lang/ja/)に従い手動で更新する運用とし
   （CONTRIBUTING.md「バージョン管理規則」）、Gitタグ・GitHub Releaseとは連携しない。
   ビルドハッシュは`git rev-parse --short HEAD`で取得し、浅いクローン
