@@ -39,7 +39,8 @@
       button:disabled { opacity: .5; cursor: default; }
       .drop { border: 2px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; color: var(--muted); cursor: pointer; }
       .drop.over { border-color: var(--accent); color: var(--text); }
-      .layer { display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 6px; background: var(--bg); margin: 4px 0; }
+      .layer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border-radius: 6px; background: var(--bg); margin: 4px 0; }
+      .layer > details { flex-basis: 100%; }
       .layer .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .layer .meta { color: var(--muted); font-size: 11px; }
       .layer progress { width: 100%; height: 6px; }

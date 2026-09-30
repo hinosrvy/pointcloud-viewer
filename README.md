@@ -1,4 +1,4 @@
-# 点群ビューア (LAS / LAZ / COPC)
+# 点群ビューア (LAS / LAZ / COPC / 3DGS)
 
 ブラウザだけで動作する点群ビューアです。サーバー不要・インストール不要で、
 `dist/index.html` 1 ファイルをブラウザで開くだけで使えます。
@@ -19,6 +19,7 @@
   国土地理院タイル（標準地図・淡色地図・全国最新写真）または OpenStreetMap、任意の XYZ タイルを地面に敷く
 - **3D モデルの重ね合わせ**: glb / gltf / obj を実座標で配置（位置・倍率・方位角・Y-up/Z-up）
 - **写真の重ね合わせ**: jpg / png を実座標で配置（位置・幅・方位角・傾き・不透明度）
+- **ガウシアンスプラット（3DGS）の表示**: .ply / .spz / .splat / .ksplat / .sog を点群と同時に表示
 
 ## 使い方
 
@@ -44,6 +45,19 @@ PDAL で COPC に変換してください（LAZ のまま、かつランダム�
 ```
 pdal translate in.laz out.copc.laz --writers.copc.forward=all
 ```
+
+### ガウシアンスプラット（3DGS）
+
+点群と同じく「ファイルを開く」・ドラッグ＆ドロップ・URL 指定で読み込めます（拡張子で自動判別。
+`.ply` は 3DGS 形式として扱います）。
+
+- ファイル内の座標が実座標（水平方向に 10 km 以上離れた値）なら、そのままの位置に表示します。
+- ローカル座標のデータは点群の底面中心に置かれます。レイヤー行の「配置」で、軸の向き
+  （Y-down: 3DGS 標準 / Y-up / Z-up）、位置、倍率、方位角を調整できます。「クリック点に配置」も使えます。
+- ファイル全体をメモリに読み込みます。メモリ使用量は 1 スプラットあたり約 32 バイト
+  （＋球面調和係数の分）で、CPU・GPU の両方に確保されます。大きなデータは `.spz` / `.sog` を推奨します。
+- クリックでの座標表示・距離計測、「表示」の色分け・点サイズは点群のみが対象です。
+- URL から読む場合は CORS が必要です（Range リクエストは不要、ファイル全体を取得します）。
 
 ### 地図の重ね合わせ
 
@@ -106,6 +120,8 @@ src/
     shaders.ts       点描画シェーダ（色分けモード・点サイズ）
     crs.ts           座標系定義（proj4）
     overlays.ts      地図タイル / 3D モデル / 写真の重ね合わせ
+    splatPlacement.ts 3DGS の形式判定・配置計算
+    splats.ts        3DGS の読み込み（Spark）
 scripts/
   make_sample.py     テスト用 LAS/LAZ の生成（laspy + lazrs）
 ```
@@ -125,7 +141,7 @@ scripts/
 
 ## 依存
 
-three.js, laz-perf (WASM), proj4, Vite, TypeScript
+three.js, laz-perf (WASM), proj4, Spark (@sparkjsdev/spark, 3DGS 描画), Vite, TypeScript
 
 ## 開発フロー
 
