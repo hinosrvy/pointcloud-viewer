@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { loadPointCloud } from './las/loader';
 import type { LasHeader } from './las/format';
 import { Viewer } from './viewer/Viewer';
-import type { Layer } from './viewer/Viewer';
+import type { Layer, SplatLayer } from './viewer/Viewer';
+import { isSplatSource, SPLAT_EXTENSIONS, type SplatAxis, type SplatPlacement } from './viewer/splatPlacement';
+import { loadSplatMesh } from './viewer/splats';
 import type { ColorMode } from './viewer/shaders';
 import { CRS_LIST, Crs, guessCrsFromWkt } from './viewer/crs';
 import { MapOverlay, ModelOverlay, PhotoOverlay, TILE_SOURCES } from './viewer/overlays';
@@ -41,14 +43,14 @@ const entries: LayerEntry[] = [];
 
 const fileSection = section('ファイル');
 const layerList = el('div');
-const drop = el('div', { class: 'drop', text: 'ここにファイルをドロップ（複数可）\n.las / .laz / .copc.laz' });
+const drop = el('div', { class: 'drop', text: 'ここにファイルをドロップ（複数可）\n.las / .laz / .copc.laz\n3DGS: .ply / .spz / .splat / .ksplat / .sog' });
 drop.style.whiteSpace = 'pre-line';
 drop.addEventListener('click', () => openBtn.click());
-const openBtn = fileButton('ファイルを開く…', '.las,.laz', true, (files) => files.forEach((f) => addSource(f, f.name)), 'primary');
-const urlInput = el('input', { type: 'text', placeholder: 'https://…/file.copc.laz（Range 対応サーバー）' });
+const openBtn = fileButton('ファイルを開く…', ['.las', '.laz', ...SPLAT_EXTENSIONS].join(','), true, (files) => files.forEach((f) => openSource(f, f.name)), 'primary');
+const urlInput = el('input', { type: 'text', placeholder: 'https://…/file.copc.laz（Range 対応サーバー）/ 3DGS' });
 const urlBtn = button('URL から読込', () => {
   const u = urlInput.value.trim();
-  if (u) addSource(u, u.split('/').pop() ?? u);
+  if (u) openSource(u, u.split('/').pop() ?? u);
 });
 const budgetRow = slider('表示点数上限', { min: 100_000, max: 20_000_000, step: 100_000, value: budget, format: (v) => `${(v / 1e6).toFixed(1)}M` }, (v) => (budget = v));
 const reloadBtn = button('上限を適用して再読込', () => {
@@ -126,6 +128,137 @@ function addSource(source: File | string, name: string) {
     });
 }
 
+/** 拡張子で 3DGS と点群に振り分ける（Issue #12） */
+function openSource(source: File | string, name: string) {
+  if (isSplatSource(typeof source === 'string' ? source : source.name)) addSplatSource(source, name);
+  else addSource(source, name);
+}
+
+// --------------------------------------------------------------- 3DGS（Issue #12）
+interface SplatEntry {
+  layer: SplatLayer | null;
+  row: HTMLDivElement;
+  removed: boolean;
+}
+const splatEntries: SplatEntry[] = [];
+
+/** 3DGS はファイル全体を読み込む（Range 読込はしない）。URL は Content-Length があれば進捗を通知する */
+async function readSplatBytes(source: File | string, onProgress: (f: number) => void): Promise<Uint8Array> {
+  if (typeof source !== 'string') return new Uint8Array(await source.arrayBuffer());
+  let res: Response;
+  try {
+    res = await fetch(source);
+  } catch {
+    throw new Error('取得できません（ネットワーク、またはサーバーの CORS 設定を確認してください）');
+  }
+  if (!res.ok) throw new Error(`取得できません（HTTP ${res.status}）`);
+  const total = Number(res.headers.get('Content-Length')) || 0;
+  if (!res.body || !total) return new Uint8Array(await res.arrayBuffer());
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    onProgress(Math.min(1, received / total)); // 圧縮転送時は Content-Length と一致しないため丸める
+  }
+  const out = new Uint8Array(received);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
+}
+
+function addSplatSource(source: File | string, name: string) {
+  const nameEl = el('div', { class: 'name', text: name });
+  nameEl.title = name;
+  const meta = el('div', { class: 'meta', text: '読み込み中…' });
+  const prog = el('progress', { max: 1, value: 0 });
+  const vis = el('input', { type: 'checkbox' });
+  vis.checked = true;
+  const removeBtn = button('×', () => removeSplatEntry(entry), 'danger');
+  const zoomBtn = button('⌖', () => {
+    if (entry.layer) viewer.fitToSplatLayer(entry.layer);
+  });
+  zoomBtn.title = 'このファイルにズーム';
+  const info = el('div', { style: 'flex:1;min-width:0' }, nameEl, meta, prog);
+  const row = el('div', { class: 'layer' }, vis, info, zoomBtn, removeBtn);
+  layerList.append(row);
+  const entry: SplatEntry = { layer: null, row, removed: false };
+  splatEntries.push(entry);
+  vis.addEventListener('change', () => entry.layer && viewer.setSplatLayerVisible(entry.layer, vis.checked));
+
+  const t0 = performance.now();
+  setStatus(`${name} を読み込み中…`);
+  readSplatBytes(source, (f) => (prog.value = f))
+    .then((bytes) => loadSplatMesh(bytes, name))
+    .then((loaded) => {
+      if (entry.removed) {
+        loaded.mesh.dispose();
+        return;
+      }
+      prog.remove();
+      entry.layer = viewer.addSplatLayer(name, loaded);
+      viewer.setSplatLayerVisible(entry.layer, vis.checked);
+      const sec = ((performance.now() - t0) / 1000).toFixed(1);
+      meta.textContent = `3DGS / ${fmtInt(loaded.splatCount)} スプラット (${sec}s)`;
+      row.append(splatPlacementUi(entry.layer));
+      setStatus(`${name} の読み込み完了: ${fmtInt(loaded.splatCount)} スプラット / ${sec} 秒`);
+      refreshRanges();
+    })
+    .catch((e: Error) => {
+      if (entry.removed) return;
+      prog.remove();
+      meta.textContent = `エラー: ${e.message}`;
+      meta.classList.add('error');
+      setStatus(`${name}: ${e.message}`, true);
+    });
+}
+
+/** レイヤー行内の折りたたみ「配置」。world モードでは入力を無効化する */
+function splatPlacementUi(layer: SplatLayer): HTMLDetailsElement {
+  const d = el('details', {}, el('summary', { text: '配置' }));
+  const p: SplatPlacement = { ...layer.placement };
+  const apply = () => viewer.setSplatPlacement(layer, p);
+  const world = p.mode === 'world';
+  const modeText = el('div', {
+    class: 'small',
+    text: world ? '実座標データ: ファイル内の座標のまま表示しています' : 'ローカル座標データ: 底面中心を下の座標に置きます',
+  });
+  const axis = select('軸の向き', [
+    { value: 'y-down', label: 'Y-down（3DGS 標準）' },
+    { value: 'y-up', label: 'Y-up' },
+    { value: 'z-up', label: 'Z-up' },
+  ], p.axis, (v) => { p.axis = v as SplatAxis; apply(); });
+  const round3 = (v: number) => Math.round(v * 1000) / 1000;
+  const x = numberInput('X (東)', round3(p.x), (v) => { p.x = v; apply(); }, 0.01);
+  const y = numberInput('Y (北)', round3(p.y), (v) => { p.y = v; apply(); }, 0.01);
+  const z = numberInput('Z (標高)', round3(p.z), (v) => { p.z = v; apply(); }, 0.01);
+  const scale = numberInput('倍率', p.scale, (v) => { p.scale = v; apply(); }, 0.01);
+  const heading = slider('方位角', { min: -180, max: 180, step: 0.5, value: p.headingDeg, format: (v) => `${v}°` }, (v) => { p.headingDeg = v; apply(); });
+  const toPick = button('クリック点に配置', () => {
+    if (!lastPick) return setStatus('先に点群をクリックして位置を選んでください', true);
+    [p.x, p.y, p.z] = lastPick;
+    [x.input.value, y.input.value, z.input.value] = lastPick.map((v) => v.toFixed(3));
+    apply();
+  });
+  if (world) for (const i of [axis.select, x.input, y.input, z.input, scale.input, heading.querySelector('input')!, toPick]) i.disabled = true;
+  d.append(modeText, axis.row, x.row, y.row, z.row, scale.row, heading, el('div', { class: 'row' }, toPick));
+  return d;
+}
+
+function removeSplatEntry(e: SplatEntry) {
+  e.removed = true;
+  if (e.layer) viewer.removeSplatLayer(e.layer);
+  e.row.remove();
+  splatEntries.splice(splatEntries.indexOf(e), 1);
+  refreshRanges();
+}
+
 function removeEntry(e: LayerEntry) {
   e.cancel();
   if (e.layer) viewer.removeLayer(e.layer);
@@ -144,7 +277,7 @@ view.addEventListener('dragleave', () => dropOverlay.classList.remove('show'));
 view.addEventListener('drop', (e) => {
   e.preventDefault();
   dropOverlay.classList.remove('show');
-  for (const f of e.dataTransfer?.files ?? []) addSource(f, f.name);
+  for (const f of e.dataTransfer?.files ?? []) openSource(f, f.name);
 });
 drop.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -154,7 +287,7 @@ drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', (e) => {
   e.preventDefault();
   drop.classList.remove('over');
-  for (const f of e.dataTransfer?.files ?? []) addSource(f, f.name);
+  for (const f of e.dataTransfer?.files ?? []) openSource(f, f.name);
 });
 
 // =============================================================== 表示
@@ -187,8 +320,11 @@ panel.append(dispSection);
 
 function refreshRanges() {
   if (viewer.bounds.isEmpty() || !viewer.origin) return;
-  if (elevMin == null) elevMinIn.input.value = (viewer.bounds.min.z + viewer.origin[2]).toFixed(2);
-  if (elevMax == null) elevMaxIn.input.value = (viewer.bounds.max.z + viewer.origin[2]).toFixed(2);
+  // 標高の色分けレンジは点群のみを基準にする（3DGS は色分けの対象外）
+  if (!viewer.pointBounds.isEmpty()) {
+    if (elevMin == null) elevMinIn.input.value = (viewer.pointBounds.min.z + viewer.origin[2]).toFixed(2);
+    if (elevMax == null) elevMaxIn.input.value = (viewer.pointBounds.max.z + viewer.origin[2]).toFixed(2);
+  }
   const c = viewer.bounds.getCenter(new THREE.Vector3());
   const w = viewer.toWorld(c);
   for (const inp of [modelX.input, photoX.input]) if (!inp.dataset.userSet) inp.value = w[0].toFixed(2);
@@ -417,7 +553,7 @@ panel.append(photoSection);
 // =============================================================== ヘルプ
 const help = section('操作方法', false);
 help.append(
-  el('div', { class: 'small', text: '左ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム\nクリック: 座標表示（計測モード中は 2 点で距離計測）\n\n大容量ファイルについて:\n・LAS (非圧縮) は分割読み込みするので数 GB でも可\n・COPC (.copc.laz) は必要なノードのみ読み込むので数 GB でも可\n・通常の LAZ は 1.5 GB まで。超える場合は COPC へ変換:\n  pdal translate in.laz out.copc.laz' }),
+  el('div', { class: 'small', text: '左ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム\nクリック: 座標表示（計測モード中は 2 点で距離計測）\n\n大容量ファイルについて:\n・LAS (非圧縮) は分割読み込みするので数 GB でも可\n・COPC (.copc.laz) は必要なノードのみ読み込むので数 GB でも可\n・通常の LAZ は 1.5 GB まで。超える場合は COPC へ変換:\n  pdal translate in.laz out.copc.laz\n\nガウシアンスプラット (3DGS):\n・.ply / .spz / .splat / .ksplat / .sog を点群と同様に読み込めます\n・ファイル全体を読み込むため、大きなデータは .spz / .sog を推奨\n・クリックでの座標表示・距離計測は点群のみが対象です' }),
 );
 help.querySelector('.small')!.setAttribute('style', 'white-space:pre-line');
 panel.append(help);
@@ -427,5 +563,5 @@ const params = new URLSearchParams(location.search);
 const autoUrl = params.get('url');
 if (autoUrl) {
   urlInput.value = autoUrl;
-  addSource(autoUrl, autoUrl.split('/').pop() ?? autoUrl);
+  openSource(autoUrl, autoUrl.split('/').pop() ?? autoUrl);
 }

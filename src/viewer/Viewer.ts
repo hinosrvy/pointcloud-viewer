@@ -4,6 +4,9 @@ import { WalkControls } from './WalkControls';
 import type { LasHeader, PointBatch } from '../las/format';
 import { COLOR_MODE_INDEX, createPointMaterial, createSharedUniforms } from './shaders';
 import type { ColorMode, SharedUniforms } from './shaders';
+import { SparkRenderer, type SplatMesh } from '@sparkjsdev/spark';
+import { computeSplatTransform, defaultPlacement, splatSceneBox, type SplatPlacement } from './splatPlacement';
+import type { LoadedSplat } from './splats';
 
 export interface Layer {
   id: number;
@@ -15,6 +18,18 @@ export interface Layer {
   visible: boolean;
   is16bitColor: boolean;
   hasRgb: boolean;
+}
+
+/** ガウシアンスプラット（3DGS）レイヤー（Issue #12） */
+export interface SplatLayer {
+  id: number;
+  name: string;
+  mesh: SplatMesh;
+  /** ファイル座標での範囲 */
+  localBox: THREE.Box3;
+  placement: SplatPlacement;
+  splatCount: number;
+  visible: boolean;
 }
 
 export interface Measurement {
@@ -38,6 +53,25 @@ export interface ViewerDebugInfo {
   controlsEnabled: boolean;
   rotateCandidate: boolean;
   rotateActive: boolean;
+}
+
+/**
+ * 全レイヤーのシーン座標での範囲を求める（Issue #12）。
+ * LAS は実座標の min/max を origin 基準に変換し、3DGS は配置後のシーン座標範囲をそのまま合わせる。
+ */
+export function computeSceneBounds(
+  origin: [number, number, number] | null,
+  lasRanges: { min: [number, number, number]; max: [number, number, number] }[],
+  splatBoxes: THREE.Box3[],
+): THREE.Box3 {
+  const o = origin ?? [0, 0, 0];
+  const box = new THREE.Box3();
+  for (const r of lasRanges) {
+    box.expandByPoint(new THREE.Vector3(r.min[0] - o[0], r.min[1] - o[1], r.min[2] - o[2]));
+    box.expandByPoint(new THREE.Vector3(r.max[0] - o[0], r.max[1] - o[1], r.max[2] - o[2]));
+  }
+  for (const b of splatBoxes) box.union(b);
+  return box;
 }
 
 /**
@@ -138,8 +172,13 @@ export class Viewer {
   readonly overlays = new THREE.Group();
   /** 実座標 → シーン座標の原点（double 精度） */
   origin: [number, number, number] | null = null;
-  /** シーン座標での全レイヤーの範囲 */
+  /** シーン座標での全レイヤー（LAS + 3DGS）の範囲。視点・near/far の基準 */
   readonly bounds = new THREE.Box3();
+  /** シーン座標での LAS レイヤーのみの範囲。標高の色分けレンジの基準 */
+  readonly pointBounds = new THREE.Box3();
+  readonly splatLayers: SplatLayer[] = [];
+  /** 最初の 3DGS レイヤー追加時に生成する（3DGS を使わないときの負荷をなくすため） */
+  private spark: SparkRenderer | null = null;
   readonly measurements: Measurement[] = [];
   measureMode = false;
   readonly walk: WalkControls;
@@ -282,8 +321,11 @@ export class Viewer {
   }
 
   addLayer(name: string, header: LasHeader): Layer {
+    const isFirstData = this.layers.length === 0 && this.splatLayers.length === 0;
     if (!this.origin) {
       this.origin = [header.min[0], header.min[1], header.min[2]];
+      // local モードの 3DGS は実座標で配置を持っているので、origin 確定に合わせて置き直す
+      for (const sl of this.splatLayers) this.applySplatTransform(sl);
     }
     const group = new THREE.Group();
     group.position.copy(this.toScene(header.min[0], header.min[1], header.min[2]));
@@ -301,10 +343,9 @@ export class Viewer {
     };
     this.layers.push(layer);
     this.scene.add(group);
-    this.bounds.expandByPoint(this.toScene(header.min[0], header.min[1], header.min[2]));
-    this.bounds.expandByPoint(this.toScene(header.max[0], header.max[1], header.max[2]));
-    this.updateZRange();
-    if (this.layers.length === 1) this.fitCamera();
+    this.recomputeBounds();
+    if (isFirstData) this.fitCamera();
+    else if (this.layers.length === 1) this.fitToLayer(layer); // 先に 3DGS だけがあった場合は点群に合わせる
     return layer;
   }
 
@@ -344,17 +385,85 @@ export class Viewer {
   }
 
   private recomputeBounds() {
-    this.bounds.makeEmpty();
-    for (const l of this.layers) {
-      this.bounds.expandByPoint(this.toScene(l.header.min[0], l.header.min[1], l.header.min[2]));
-      this.bounds.expandByPoint(this.toScene(l.header.max[0], l.header.max[1], l.header.max[2]));
-    }
+    const las = this.layers.map((l) => ({ min: l.header.min, max: l.header.max }));
+    this.pointBounds.copy(computeSceneBounds(this.origin, las, []));
+    this.bounds.copy(computeSceneBounds(this.origin, las, this.splatLayers.map((sl) => this.splatBox(sl))));
     this.updateZRange();
   }
 
   private updateZRange() {
-    if (this.bounds.isEmpty()) return;
-    this.shared.uZRange.value.set(this.bounds.min.z, this.bounds.max.z);
+    if (this.pointBounds.isEmpty()) return;
+    this.shared.uZRange.value.set(this.pointBounds.min.z, this.pointBounds.max.z);
+  }
+
+  // ------------------------------------------------------------ 3DGS layers (Issue #12)
+  addSplatLayer(name: string, loaded: LoadedSplat): SplatLayer {
+    if (!this.spark) {
+      this.spark = new SparkRenderer({ renderer: this.renderer });
+      this.scene.add(this.spark);
+    }
+    const isFirstData = this.layers.length === 0 && this.splatLayers.length === 0;
+    const placement = defaultPlacement(loaded.localBox, this.bounds, this.origin);
+    // world モードでは LAS と同様に範囲の min を origin とする（local モードでは確定させない）
+    if (!this.origin && placement.mode === 'world') {
+      const m = loaded.localBox.min;
+      this.origin = [m.x, m.y, m.z];
+    }
+    const layer: SplatLayer = {
+      id: ++this.layerSeq,
+      name,
+      mesh: loaded.mesh,
+      localBox: loaded.localBox,
+      placement,
+      splatCount: loaded.splatCount,
+      visible: true,
+    };
+    this.splatLayers.push(layer);
+    this.scene.add(layer.mesh);
+    this.applySplatTransform(layer);
+    this.recomputeBounds();
+    if (isFirstData) this.fitCamera();
+    return layer;
+  }
+
+  setSplatPlacement(layer: SplatLayer, p: SplatPlacement) {
+    layer.placement = { ...p };
+    this.applySplatTransform(layer);
+    this.recomputeBounds();
+  }
+
+  setSplatLayerVisible(layer: SplatLayer, v: boolean) {
+    layer.visible = v;
+    layer.mesh.visible = v;
+  }
+
+  removeSplatLayer(layer: SplatLayer) {
+    const i = this.splatLayers.indexOf(layer);
+    if (i < 0) return;
+    this.splatLayers.splice(i, 1);
+    this.scene.remove(layer.mesh);
+    layer.mesh.dispose();
+    this.recomputeBounds();
+  }
+
+  fitToSplatLayer(layer: SplatLayer) {
+    this.fitCamera(this.splatBox(layer));
+  }
+
+  private splatTransform(layer: SplatLayer) {
+    return computeSplatTransform(layer.placement, layer.localBox, this.origin ?? [0, 0, 0]);
+  }
+
+  private splatBox(layer: SplatLayer): THREE.Box3 {
+    return splatSceneBox(layer.localBox, this.splatTransform(layer));
+  }
+
+  private applySplatTransform(layer: SplatLayer) {
+    const t = this.splatTransform(layer);
+    layer.mesh.position.copy(t.position);
+    layer.mesh.quaternion.copy(t.quaternion);
+    layer.mesh.scale.copy(t.scale);
+    layer.mesh.updateMatrixWorld();
   }
 
   /** ウォークスルー（一人称キーボード操作）の切替 */

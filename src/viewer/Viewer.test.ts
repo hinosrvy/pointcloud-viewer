@@ -7,6 +7,7 @@ import {
   computeDoubleClickZoomPosition,
   clampCameraDistance,
   easeOutCubic,
+  computeSceneBounds,
 } from './Viewer';
 
 // Issue #5: ホイールズームインを繰り返すと効かなくなる不具合の修正。
@@ -145,5 +146,32 @@ describe('clampCameraDistance', () => {
     expect(result.x).toBeCloseTo(5);
     expect(result.y).toBeCloseTo(5.1);
     expect(result.z).toBeCloseTo(5);
+  });
+});
+
+// Issue #12: 3DGS レイヤーも fitCamera / near・far / minDistance の基準となる bounds に含める
+describe('computeSceneBounds', () => {
+  it('LAS レイヤーの実座標範囲を origin 基準のシーン座標に変換して合わせる', () => {
+    const b = computeSceneBounds([100, 200, 10], [{ min: [100, 200, 10], max: [110, 220, 15] }], []);
+    expect(b.min.toArray()).toEqual([0, 0, 0]);
+    expect(b.max.toArray()).toEqual([10, 20, 5]);
+  });
+
+  it('3DGS レイヤーのシーン座標範囲も含める', () => {
+    const splat = new THREE.Box3(new THREE.Vector3(-5, -5, -1), new THREE.Vector3(1, 1, 30));
+    const b = computeSceneBounds([100, 200, 10], [{ min: [100, 200, 10], max: [110, 220, 15] }], [splat]);
+    expect(b.min.toArray()).toEqual([-5, -5, -1]);
+    expect(b.max.toArray()).toEqual([10, 20, 30]);
+  });
+
+  it('3DGS レイヤーのみ（origin 未確定）でも範囲を返す', () => {
+    const splat = new THREE.Box3(new THREE.Vector3(-1, -2, 0), new THREE.Vector3(1, 2, 3));
+    const b = computeSceneBounds(null, [], [splat]);
+    expect(b.min.toArray()).toEqual([-1, -2, 0]);
+    expect(b.max.toArray()).toEqual([1, 2, 3]);
+  });
+
+  it('レイヤーがなければ空', () => {
+    expect(computeSceneBounds(null, [], []).isEmpty()).toBe(true);
   });
 });

@@ -16,14 +16,14 @@ JS・WASM（laz-perf）・Worker をすべて内包する。
 
 ### 2.1 技術スタック
 
-| 区分 | 技術 |
-|---|---|
-| 描画 | three.js（`WebGLRenderer` + カスタム `ShaderMaterial`） |
-| 点群展開 | laz-perf（WASM 版 LASzip） |
-| 座標変換 | proj4 |
-| ビルド | Vite + TypeScript（`tsc --noEmit && vite build`） |
-| 並列処理 | Web Worker（`?worker&inline` でバンドルに内包） |
-| 3DGS 描画 | Spark（`@sparkjsdev/spark`、WASM・Worker をJSに内包） |
+| 区分      | 技術                                                        |
+| --------- | ----------------------------------------------------------- |
+| 描画      | three.js（`WebGLRenderer` + カスタム `ShaderMaterial`） |
+| 点群展開  | laz-perf（WASM 版 LASzip）                                  |
+| 座標変換  | proj4                                                       |
+| ビルド    | Vite + TypeScript（`tsc --noEmit && vite build`）         |
+| 並列処理  | Web Worker（`?worker&inline` でバンドルに内包）           |
+| 3DGS 描画 | Spark（`@sparkjsdev/spark`、WASM・Worker をJSに内包）     |
 
 ### 2.2 ディレクトリ構成と責務
 
@@ -58,16 +58,16 @@ scripts/
 
 LASヘッダから抽出する情報。バイナリオフセットは LAS 1.0〜1.4 仕様に準拠。
 
-| フィールド | 内容 |
-|---|---|
-| `versionMajor/Minor` | LASバージョン |
-| `pointFormat` | 点レコードフォーマット（PDRF）。圧縮ビット(0x80)を除去した値 |
-| `compressed` | rawFormatの0x80ビットで判定（LAZ形式か） |
-| `pointCount` | 1.4以降は64bit値（`evlrOffset`近傍）を優先採用 |
-| `scale`/`offset` | 整数座標→実座標変換係数 |
-| `min`/`max` | 点群のバウンディングボックス（実座標） |
-| `copc` | `CopcInfo`（COPC VLRが存在する場合のみ） |
-| `wkt` | 座標系のWKT文字列（`LASF_Projection`/recordId=2112のVLR） |
+| フィールド             | 内容                                                         |
+| ---------------------- | ------------------------------------------------------------ |
+| `versionMajor/Minor` | LASバージョン                                                |
+| `pointFormat`        | 点レコードフォーマット（PDRF）。圧縮ビット(0x80)を除去した値 |
+| `compressed`         | rawFormatの0x80ビットで判定（LAZ形式か）                     |
+| `pointCount`         | 1.4以降は64bit値（`evlrOffset`近傍）を優先採用             |
+| `scale`/`offset`   | 整数座標→実座標変換係数                                     |
+| `min`/`max`        | 点群のバウンディングボックス（実座標）                       |
+| `copc`               | `CopcInfo`（COPC VLRが存在する場合のみ）                   |
+| `wkt`                | 座標系のWKT文字列（`LASF_Projection`/recordId=2112のVLR）  |
 
 `HEADER_READ_BYTES = 375 + 54 + 160 + 4096` バイトを先読みし、`parseHeader()` で
 シグネチャ検証・固定フィールド読み取り・VLR走査（`copc` / WKT）を行う。
@@ -75,6 +75,7 @@ LASヘッダから抽出する情報。バイナリオフセットは LAS 1.0〜
 #### 3.1.2 `parseHeader(buf): LasHeader`
 
 処理フロー:
+
 1. 先頭4バイトが `LASF` であることを確認（不一致は例外）。
 2. `DataView` で固定オフセットから各フィールドを読み取る。
 3. `versionMinor >= 4` かつ `headerSize >= 375` の場合、EVLRオフセット/件数と
@@ -110,16 +111,16 @@ PDRF（点データフォーマット）ごとにRGB・intensity・classificatio
 
 `WorkerMessage` はタグ付きユニオン型で、Worker→メインスレッドの通知種別を表す。
 
-| type | 意味 |
-|---|---|
-| `ready` | Worker起動完了（メインスレッドでのフォールバック判定に使用） |
-| `warn` | 警告（例: 点数をファイルサイズから補正した等） |
-| `header` | ヘッダ解析完了、`mode`（las/laz/copc）を通知 |
-| `copcPlan` | COPC読み込み計画（使用ノード数・最大レベル）を通知 |
-| `batch` | 点群バッチ（Transferableで転送） |
-| `progress` | 進捗率と読み込み済み点数 |
-| `done` | 完了、最終読み込み点数 |
-| `error` | 例外発生、メッセージ文字列 |
+| type         | 意味                                                         |
+| ------------ | ------------------------------------------------------------ |
+| `ready`    | Worker起動完了（メインスレッドでのフォールバック判定に使用） |
+| `warn`     | 警告（例: 点数をファイルサイズから補正した等）               |
+| `header`   | ヘッダ解析完了、`mode`（las/laz/copc）を通知               |
+| `copcPlan` | COPC読み込み計画（使用ノード数・最大レベル）を通知           |
+| `batch`    | 点群バッチ（Transferableで転送）                             |
+| `progress` | 進捗率と読み込み済み点数                                     |
+| `done`     | 完了、最終読み込み点数                                       |
+| `error`    | 例外発生、メッセージ文字列                                   |
 
 ### 3.3 `las/loader.ts` — Worker起動とフォールバック制御
 
@@ -149,6 +150,7 @@ sequenceDiagram
 ```
 
 フォールバック判定ロジック:
+
 - `new DecodeWorker()` 自体が例外を投げた場合 → 即座にメインスレッドで `runLoad()` を実行。
 - Worker起動後、`ready` 受信前に `onerror` が発火した場合 → CSP等でWorkerが機能しない環境と判断し、
   メインスレッドにフォールバック。
@@ -261,12 +263,12 @@ float32相対値とすることで、平面直角座標系のような大きな�
 
 #### 3.7.3 視点制御
 
-| メソッド | 内容 |
-|---|---|
-| `fitCamera(box)` | 対象Boxの中心・対角長からカメラ位置・near/far・`controls.minDistance`を自動設定 |
-| `setView(kind)` | `top`/`north`/`east`/`iso` の定型視点方向へジャンプ |
-| `setWalkMode(on)` | `OrbitControls`⇔`WalkControls`の排他切替。ON時は`near`を0.05へ縮小、OFF時は視線5m先を`OrbitControls.target`に設定して復帰 |
-| `startWalkAt(world, eyeHeight)` | クリック点(実座標)に目線高さを加えて一人称視点を開始 |
+| メソッド                          | 内容                                                                                                                               |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `fitCamera(box)`                | 対象Boxの中心・対角長からカメラ位置・near/far・`controls.minDistance`を自動設定                                                  |
+| `setView(kind)`                 | `top`/`north`/`east`/`iso` の定型視点方向へジャンプ                                                                        |
+| `setWalkMode(on)`               | `OrbitControls`⇔`WalkControls`の排他切替。ON時は`near`を0.05へ縮小、OFF時は視線5m先を`OrbitControls.target`に設定して復帰 |
+| `startWalkAt(world, eyeHeight)` | クリック点(実座標)に目線高さを加えて一人称視点を開始                                                                               |
 
 **ホイールズームの下限距離（`controls.minDistance`）**: `zoomToCursor = true`時の
 `OrbitControls`は、カーソル位置中心のズームインをカメラの現在距離に**比例した**絶対移動量で
@@ -297,8 +299,7 @@ float32相対値とすることで、平面直角座標系のような大きな�
 `minDistance`を`near`に近づける（＝結合する）と、Issue #5で問題になった「詳細を見るための
 ズームインができない」不満が再発するため採用しない。代わりに、`OrbitControls`の
 `change`イベント（`render()`内、カメラ・target間距離を毎フレーム参照可能な箇所）で
-`camera.near`を現在距離に応じて動的に再計算する（`near = clamp(distance / 100, minDistance近傍の
-下限, size / 5000)`）方式を採用し、ズームインするほど`near`も追従して縮むようにする。
+`camera.near`を現在距離に応じて動的に再計算する（`near = clamp(distance / 100, minDistance近傍の 下限, size / 5000)`）方式を採用し、ズームインするほど`near`も追従して縮むようにする。
 `minDistance`（浮動小数点崩壊防止の下限）と`far`（`size * 50`固定）は従来どおり変更しない。
 
 **ホイールズームの「一括ジャンプ」対策（Issue #7）**: `OrbitControls`はホイール1回分のズーム倍率を
@@ -466,15 +467,15 @@ DOM要素（`#panel`, `#canvas`, `#status`, `#coord`, `#toolbar`等）を取得�
 3種の`*Overlay`をインスタンス化した上で、`ui.ts`のヘルパーでセクションごとのUIパネルを
 組み立てる。責務ごとに以下のセクションに分割:
 
-| セクション | 主な機能 |
-|---|---|
-| ファイル | ドラッグ&ドロップ/ファイル選択/URL読込、表示点数上限、レイヤー一覧（可視・ズーム・削除） |
-| 表示 | 色分けモード、点サイズ・減衰、標高/強度レンジ、RGBガンマ、背景色 |
-| ウォークスルー | 開始/終了、移動・旋回速度、目線高さ |
-| 距離計測 | 計測モード切替、結果一覧、消去 |
-| 地図の重ね合わせ | 座標系選択、タイル種別、高さオフセット、不透明度 |
-| 3Dモデルの重ね合わせ | ファイル読込、位置・倍率・方位角・Y-up設定 |
-| 写真の重ね合わせ | ファイル読込、位置・幅・方位角・傾き・不透明度 |
+| セクション           | 主な機能                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| ファイル             | ドラッグ&ドロップ/ファイル選択/URL読込、表示点数上限、レイヤー一覧（可視・ズーム・削除） |
+| 表示                 | 色分けモード、点サイズ・減衰、標高/強度レンジ、RGBガンマ、背景色                         |
+| ウォークスルー       | 開始/終了、移動・旋回速度、目線高さ                                                      |
+| 距離計測             | 計測モード切替、結果一覧、消去                                                           |
+| 地図の重ね合わせ     | 座標系選択、タイル種別、高さオフセット、不透明度                                         |
+| 3Dモデルの重ね合わせ | ファイル読込、位置・倍率・方位角・Y-up設定                                               |
+| 写真の重ね合わせ     | ファイル読込、位置・幅・方位角・傾き・不透明度                                           |
 
 ファイル選択・ドラッグ&ドロップ・URL 指定で受け取ったソースは、`isSplatSource()`（[3.13.2](#3132-viewersplatplacementts--純粋ロジック)）で
 3DGS かどうかを判定し、3DGS なら `addSplatSource()`、それ以外は従来どおり `addSource()` に振り分ける。
@@ -523,12 +524,12 @@ sequenceDiagram
   スプラットの深度ソートは Spark が Worker で行う。
 - Spark に依存するコードと、依存しない純粋ロジックを分ける（単体テストで Spark/WebGL/WASM を読み込まないため）。
 
-| ファイル | 責務 | Spark 依存 |
-|---|---|---|
-| `viewer/splatPlacement.ts` | 形式判定、軸変換、実座標/ローカルの判定、配置（位置・回転・倍率）の計算 | なし（three.js の数学クラスのみ） |
-| `viewer/splats.ts` | バイト列から `SplatMesh` を生成し、読み込み完了を待ってローカル座標の範囲とスプラット数を返す | あり |
-| `viewer/Viewer.ts` | `SparkRenderer` の保持、3DGS レイヤーの追加・削除・表示切替・配置反映、`bounds` への反映 | あり（型と `SparkRenderer` のみ） |
-| `main.ts` | 読み込みの振り分け、レイヤー行と配置 UI | なし（`splats.ts` 経由） |
+| ファイル                     | 責務                                                                                           | Spark 依存                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `viewer/splatPlacement.ts` | 形式判定、軸変換、実座標/ローカルの判定、配置（位置・回転・倍率）の計算                        | なし（three.js の数学クラスのみ）  |
+| `viewer/splats.ts`         | バイト列から`SplatMesh` を生成し、読み込み完了を待ってローカル座標の範囲とスプラット数を返す | あり                               |
+| `viewer/Viewer.ts`         | `SparkRenderer` の保持、3DGS レイヤーの追加・削除・表示切替・配置反映、`bounds` への反映   | あり（型と`SparkRenderer` のみ） |
+| `main.ts`                  | 読み込みの振り分け、レイヤー行と配置 UI                                                        | なし（`splats.ts` 経由）         |
 
 #### 3.13.2 `viewer/splatPlacement.ts` — 純粋ロジック
 
@@ -609,8 +610,12 @@ fitToSplatLayer(layer: SplatLayer): void;
   2. `origin` が未確定で world モードなら、`origin = localBox.min`（LAS の `header.min` と同じ扱い）とする。
      local モードでは `origin` を確定させない（後から読む LAS の精度を守るため）。
   3. `computeSplatTransform()` を mesh に反映し、`recomputeBounds()`。最初のデータ（LAS・3DGS 含めて）なら `fitCamera()`。
-- `recomputeBounds()` は LAS レイヤーに加えて `splatSceneBox()` の結果を含める。これにより `fitCamera()`・`setView()`・
-  near/far・`minDistance` の計算がスプラットにも効く。
+- `recomputeBounds()` は `computeSceneBounds()`（純粋関数）で、LAS レイヤーに加えて `splatSceneBox()` の結果を含めた
+  `bounds` を求める。これにより `fitCamera()`・`setView()`・near/far・`minDistance` の計算がスプラットにも効く。
+  一方、標高の色分けレンジ（`uZRange`、「表示」の標高下限/上限の初期値）は点群だけを基準にするため、
+  LAS のみの範囲を `pointBounds` として別に持つ。
+- `addLayer()` のカメラ合わせ: 最初のデータ（LAS・3DGS を通して）なら従来どおり `fitCamera()`。
+  先に 3DGS だけが読み込まれていた場合は、最初の LAS レイヤーに `fitToLayer()` で合わせる。
 - `removeSplatLayer()` は scene から外して `mesh.dispose()`。最後の 3DGS レイヤーが消えても `SparkRenderer` は残す。
 - **origin が後から確定した場合**: local モードの配置は実座標で持っているため、`addLayer()` で `origin` が確定したら、
   全 3DGS レイヤーに `computeSplatTransform()` を再適用する（`origin` 未確定の間は `(0,0,0)` として計算している）。
@@ -623,22 +628,22 @@ fitToSplatLayer(layer: SplatLayer): void;
   2. File は `arrayBuffer()`、URL は `fetch()` で全体を取得する（Range 読込はしない）。URL の場合は
      `Content-Length` があれば進捗バーを更新する。
   3. `loadSplatMesh()` → `viewer.addSplatLayer()`。
-  4. 行内に折りたたみの「配置」（`<details>`）を置く。項目は、モード表示、軸の向き（Z-up / Y-up / Y-down）、
+  4. 行の下に全幅で折りたたみの「配置」（`<details>`）を置く（`.layer` を `flex-wrap: wrap` にする）。項目は、モード表示、軸の向き（Z-up / Y-up / Y-down）、
      X/Y/Z、倍率、方位角、「クリック点に配置」。world モードでは軸・倍率・方位角を無効化する。
      変更時は `viewer.setSplatPlacement()` を呼ぶ。
 - `?url=` パラメータ・URL 入力欄も `isSplatSource()` で振り分ける。
 
 #### 3.13.6 テスト方針（TDD）
 
-| 対象 | テスト内容 |
-|---|---|
-| `isSplatSource` | 各拡張子、大文字、URL のクエリ付き、`.las`/`.laz`/`.copc.laz` が false |
-| `axisToZUp` | 各軸で、ファイルの「上」方向ベクトルが (0,0,1) に写ること |
-| `isGeoreferenced` | しきい値の前後、負の座標 |
-| `defaultPlacement` | 実座標データ → world、ローカルデータ → local かつ既存 bounds の底面中心に配置、bounds なし → (0,0,0) |
-| `computeSplatTransform` | world: position=-origin。local: 基準点が指定実座標に来る、倍率・方位角・軸変換の組合せ |
-| `splatSceneBox` | 変換後の範囲が期待値と一致 |
-| `Viewer` の bounds | 3DGS レイヤー込みの bounds 計算（純粋関数に切り出してテスト） |
+| 対象                      | テスト内容                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `isSplatSource`         | 各拡張子、大文字、URL のクエリ付き、`.las`/`.laz`/`.copc.laz` が false                            |
+| `axisToZUp`             | 各軸で、ファイルの「上」方向ベクトルが (0,0,1) に写ること                                               |
+| `isGeoreferenced`       | しきい値の前後、負の座標                                                                                |
+| `defaultPlacement`      | 実座標データ → world、ローカルデータ → local かつ既存 bounds の底面中心に配置、bounds なし → (0,0,0) |
+| `computeSplatTransform` | world: position=-origin。local: 基準点が指定実座標に来る、倍率・方位角・軸変換の組合せ                  |
+| `splatSceneBox`         | 変換後の範囲が期待値と一致                                                                              |
+| `Viewer` の bounds      | 3DGS レイヤー込みの bounds 計算（純粋関数に切り出してテスト）                                           |
 
 `splats.ts`（Spark・WASM・WebGL が必要）と UI 配線は単体テストの対象外とし、動作確認（Playwright で `file://` 起動、
 実データの PLY/SPZ 読込、点群との同時表示）で確認する。
@@ -650,6 +655,8 @@ fitToSplatLayer(layer: SplatLayer): void;
 - 色分けモード・点サイズ・減衰などの「表示」設定はスプラットに適用しない。
 - ファイル全体をメモリに読み込む（LOD・部分読込なし）。大きなデータには圧縮率の高い `.spz` / `.sog` を推奨する。
 - 位置精度は float32 相当（4万m 付近で約 4mm）。表示用途としては十分と判断した。
+- ローカル座標の 3DGS を点群より先に読み込むと、その時点では実座標 (0,0,0) に置かれる。後から点群を読み込むと
+  origin が確定し、3DGS は実座標 (0,0,0) の位置（点群から離れた位置）に置き直される。「クリック点に配置」等で移動する。
 
 ## 4. データフロー図（全体）
 
@@ -676,17 +683,17 @@ Spark SplatMesh]
 
 ## 5. エラーハンドリング方針
 
-| 発生箇所 | 方針 |
-|---|---|
-| ヘッダ不正（非LAS） | `parseHeader()`で例外→`decode.ts`が`describeError()`で整形→`error`メッセージ |
-| 点数0/過大 | ファイルサイズから補正し`warn`で通知（処理は継続） |
-| Worker起動不可（CSP等） | `loader.ts`がメインスレッド実行にフォールバック（`onFallback`で画面通知） |
-| Worker異常終了（メモリ不足等） | `reject`し、UIで「表示点数上限を下げて再読込」を案内 |
-| 通常LAZが1.5GB超 | `decode.ts`が事前に例外化し、COPC変換コマンド例を提示 |
-| Range非対応サーバー | `openSource()`のHEADレスポンス確認時点で例外化 |
-| 地図/座標系変換不正 | `MapOverlay.build()`で`isFinite`/緯度範囲チェックし例外化、UI側でstatus表示 |
-| 3DGS ファイル不正・非対応形式 | `loadSplatMesh()`が`SplatMesh.initialized`の reject を受けて例外化し、レイヤー行にエラー表示（点群と同じ表示形式） |
-| 3DGS の URL 取得失敗 | `fetch`の HTTP エラー / CORS エラーを例外化し、レイヤー行にエラー表示 |
+| 発生箇所                       | 方針                                                                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| ヘッダ不正（非LAS）            | `parseHeader()`で例外→`decode.ts`が`describeError()`で整形→`error`メッセージ                                 |
+| 点数0/過大                     | ファイルサイズから補正し`warn`で通知（処理は継続）                                                                   |
+| Worker起動不可（CSP等）        | `loader.ts`がメインスレッド実行にフォールバック（`onFallback`で画面通知）                                          |
+| Worker異常終了（メモリ不足等） | `reject`し、UIで「表示点数上限を下げて再読込」を案内                                                                 |
+| 通常LAZが1.5GB超               | `decode.ts`が事前に例外化し、COPC変換コマンド例を提示                                                                |
+| Range非対応サーバー            | `openSource()`のHEADレスポンス確認時点で例外化                                                                       |
+| 地図/座標系変換不正            | `MapOverlay.build()`で`isFinite`/緯度範囲チェックし例外化、UI側でstatus表示                                        |
+| 3DGS ファイル不正・非対応形式  | `loadSplatMesh()`が`SplatMesh.initialized`の reject を受けて例外化し、レイヤー行にエラー表示（点群と同じ表示形式） |
+| 3DGS の URL 取得失敗           | `fetch`の HTTP エラー / CORS エラーを例外化し、レイヤー行にエラー表示                                                |
 
 ## 6. 既知の制約・設計上のトレードオフ
 
@@ -699,7 +706,7 @@ Spark SplatMesh]
   また色分けモード・点サイズ等の「表示」設定はスプラットには適用されない。
 - 3DGS は Spark の拡張形式（float32）で保持するため、実座標モードの位置精度は float32 の量子化幅
   （絶対値 4万m 付近で約4mm）に制限される（[docs/research/12-gaussian-splatting.md](research/12-gaussian-splatting.md)）。
-- Spark を内包するため、単一 HTML のサイズは約 1.5MB → 約 4.2MB に増える。
+- Spark を内包するため、単一 HTML のサイズは約 1.5MB → 約 4.0MB（gzip 1.36MB）に増える。
 
 ## 7. デプロイ構成（GitHub Pages）
 
@@ -714,4 +721,3 @@ Spark SplatMesh]
   GitHub Pagesのプロジェクトサブパス配下でも追加設定なしで動作する。
 - ワークフローの`actions/setup-node`は`vite@^7`が要求するNode 20.19+/22.12+を満たすため
   `node-version: 22`を指定する。
-

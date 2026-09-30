@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+- ガウシアンスプラッティング（3DGS）データの表示に対応（Issue #12）。
+  .ply / .spz / .splat / .ksplat / .sog をファイル選択・ドラッグ&ドロップ・URL 指定で読み込み、
+  LAS/LAZ/COPC 点群と同じシーンで表示・表示切替・ズーム・削除できる。描画には Spark
+  （`@sparkjsdev/spark` 2.2.0）を採用した。Spark 標準の格納形式は中心座標が float16 のため実座標（数万 m）では
+  位置が破綻することを PoC で確認し、常に拡張形式（float32、`extSplats: true`）で読み込む。
+  ファイル内の座標が大きいデータは実座標としてそのまま表示し、ローカル座標のデータは
+  位置・倍率・方位角・軸の向き（Y-down/Y-up/Z-up）で配置できる。クリックでの座標取得・距離計測は対象外。
+  単一 HTML のサイズは約 1.5MB → 約 4.0MB に増加。
+  設計は docs/detailed-design.md「3.13」、調査は docs/research/12-gaussian-splatting.md を参照。
 - 開発フローにテスト駆動開発（TDD）を導入。実装工程をRed→Green→Refactorのサイクルに変更（CONTRIBUTING.md）。
 - テストランナーとしてVitestを追加（`npm run test` / `npm run test:watch`、設定は `vitest.config.ts`）。
 - リサーチ・技術検証結果を設計書類として管理する規約を追加（`docs/research/`、CONTRIBUTING.md「3. リサーチ・技術検証」を更新）。
